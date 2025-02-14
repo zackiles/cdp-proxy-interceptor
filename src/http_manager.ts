@@ -1,6 +1,7 @@
 import type { ChromeManager } from './chrome_manager.ts'
 import type { ErrorHandler } from './error_handler.ts'
-import { CDPErrorType, CDPResponse } from './types.ts'
+import type { CDPResponse } from './types.ts'
+import { CDPErrorType } from './types.ts'
 import { CDP_WEBSOCKET_PATHS } from './constants.ts'
 
 /**

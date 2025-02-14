@@ -1,10 +1,12 @@
-// Export all types
-export * from './types.ts'
+// Export types needed by consumers
+export type {
+  CDPPlugin,
+  CDPCommandRequest,
+  CDPCommandResponse,
+  CDPEvent,
+  Session
+} from './types.ts'
 
-// Export core classes
-export { ChromeManager } from './chrome_manager.ts'
-export { SessionManager } from './session_manager.ts'
-export { SchemaValidator } from './schema_validator.ts'
-export { PluginManager } from './plugin_manager.ts'
-export { WebSocketManager } from './websocket_manager.ts'
-export { ErrorHandler } from './error_handler.ts'
+// Export main functionality for starting/stopping proxy
+export { default as startProxy } from './main.ts'
+export { setupSignalHandlers } from './main.ts'

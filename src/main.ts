@@ -1,15 +1,13 @@
 import 'jsr:@std/dotenv/load'
 
-import {
-  ChromeManager,
-  SessionManager,
-  SchemaValidator,
-  PluginManager,
-  WebSocketManager,
-  ErrorHandler,
-} from './mod.ts'
+import { ChromeManager } from './chrome_manager.ts'
+import { ErrorHandler } from './error_handler.ts'
 import { HttpManager } from './http_manager.ts'
-import { ProxyComponents } from './types.ts'
+import { PluginManager } from './plugin_manager.ts'
+import { SchemaValidator } from './schema_validator.ts'
+import { SessionManager } from './session_manager.ts'
+import { WebSocketManager } from './websocket_manager.ts'
+import type { ProxyComponents } from './types.ts'
 
 
 /**
