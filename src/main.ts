@@ -96,31 +96,38 @@ const handleWebSocketUpgrade = async (
  */
 export default async function startProxy(port: number) {
   console.log(`Starting CDP proxy on port ${port}...`)
-  const components = await createComponents()
-  
   const abortController = new AbortController()
-  const server = Deno.serve(
-    { port, signal: abortController.signal },
-    req => {
-      const url = new URL(req.url)
-      return req.headers.get('upgrade')?.toLowerCase() === 'websocket'
-        ? handleWebSocketUpgrade(req, components)
-        : components.httpManager.handleRequest(req, url, port)
+  
+  try {
+    const components = await createComponents()
+    
+    const cleanup = async () => {
+      try {
+        await components.chromeManager.stop()
+        abortController.abort()
+        await server.finished
+      } catch (error) {
+        console.error('Error during cleanup:', error)
+        throw error
+      }
     }
-  )
 
-  const cleanup = async () => {
-    try {
-      await components.chromeManager.stop()
-      abortController.abort()
-      await server.finished
-    } catch (error) {
-      console.error('Error during cleanup:', error)
-      throw error
-    }
+    // Create server after all setup is complete
+    const server = Deno.serve(
+      { port, signal: abortController.signal },
+      req => {
+        const url = new URL(req.url)
+        return req.headers.get('upgrade')?.toLowerCase() === 'websocket'
+          ? handleWebSocketUpgrade(req, components)
+          : components.httpManager.handleRequest(req, url, port)
+      }
+    )
+
+    return { cleanup, abortController, server }
+  } catch (error) {
+    abortController.abort()
+    throw error
   }
-
-  return { cleanup, abortController }
 }
 
 const setupSignalHandlers = (cleanup: () => Promise<void>) => {
@@ -147,8 +154,11 @@ async function main() {
     throw new Error('CDP_PROXY_PORT environment variable must be a number')
   }
 
-  const { cleanup } = await startProxy(port)
+  const { cleanup, server } = await startProxy(port)
   setupSignalHandlers(cleanup)
+  
+  // Now we can await the server
+  await server.finished
   return cleanup
 }
 
@@ -160,11 +170,14 @@ export {
 if (import.meta.main) {
   main().catch(async error => {
     console.error('Error during startup:', error)
-    if (typeof error === 'object' && error !== null && 'cleanup' in error) {
-      await (error.cleanup as () => Promise<void>)().catch(cleanupError => {
-        console.error('Error during cleanup:', cleanupError)
-      })
+    try {
+      if (typeof error === 'object' && error !== null && 'cleanup' in error) {
+        await (error.cleanup as () => Promise<void>)()
+      }
+    } catch (cleanupError) {
+      console.error('Error during cleanup:', cleanupError)
+    } finally {
+      Deno.exit(1)
     }
-    Deno.exit(1)
   })
 }
