@@ -40,39 +40,17 @@ The core strength of this proxy lies in its flexible plugin system, which allows
    cp .env.example .env
    ```
 
-   You have two mutually exclusive options for configuring Chrome/Chromium:
+   Configure your environment variables according to the [Configuration section](#environment-variables) below. You'll need to choose between using your own Chrome/Chromium executable or letting the proxy manage Chromium for you.
 
-   **Option 1: Use Your Own Chrome/Chromium**
-   ```env
-   # Point to your existing Chrome/Chromium executable
-   CHROMIUM_EXECUTABLE_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-   ```
+3. **Install Chromium (Optional):**
 
-   **Option 2: Let the Proxy Download and Manage Chromium**
-   ```env
-   # Directory where Chromium will be installed
-   CHROMIUM_DIRECTORY=.cache/chromium
-   # Specific version to download (find versions at https://chromiumdash.appspot.com/)
-   CHROMIUM_STATIC_VERSION=1381568
-   ```
-
-   **Required for Both Options:**
-   ```env
-   # Port for the CDP proxy to listen on
-   CDP_PROXY_PORT=9222
-   ```
-
-   > **Important:** You must choose either Option 1 OR Option 2. Setting both `CHROMIUM_EXECUTABLE_PATH` and either of the Option 2 variables will result in an error.
-
-3. **Install Chromium (Only for Option 2):**
-
-   If you chose Option 2 (letting the proxy manage Chromium), install it using:
+   If you chose to let the proxy manage Chromium (Option 2 in the [Configuration section](#environment-variables)), install it using:
 
    ```bash
    deno task install:chromium
    ```
 
-   > Note: Skip this step if you're using your own Chrome/Chromium executable (Option 1).
+   > Note: Skip this step if you're using your own Chrome/Chromium executable.
 
 4. **Start the Proxy Server:**
 
@@ -239,19 +217,23 @@ CHROMIUM_STATIC_VERSION=1381568 # Last stable branch position as of 2025-02-11
 CDP_PROXY_PORT=9222
 ```
 
-*   **Option 1: Use Your Own Chrome/Chromium**
-    - **`CHROMIUM_EXECUTABLE_PATH`:** Path to your Chrome or Chromium executable. When set, the proxy will use this executable directly and ignore `CHROMIUM_DIRECTORY` and `CHROMIUM_STATIC_VERSION`.
+You have two mutually exclusive options for configuring Chrome/Chromium:
 
-*   **Option 2: Let the Proxy Manage Chromium**
-    - **`CHROMIUM_DIRECTORY`:** The directory where Chromium will be installed and launched from. Required when not using `CHROMIUM_EXECUTABLE_PATH`.
-    - **`CHROMIUM_STATIC_VERSION`:** The specific Chromium version to download and use. Required when not using `CHROMIUM_EXECUTABLE_PATH`. You can find branch positions (versions) at [https://chromiumdash.appspot.com/](https://chromiumdash.appspot.com/).
+**Option 1: Use Your Own Chrome/Chromium**
+- **`CHROMIUM_EXECUTABLE_PATH`:** Path to your Chrome or Chromium executable. When set, the proxy will use this executable directly and ignore `CHROMIUM_DIRECTORY` and `CHROMIUM_STATIC_VERSION`.
 
-*   **Required for Both Options**
-    - **`CDP_PROXY_PORT`:** The port the proxy will listen on. Defaults to `9222`.
+**Option 2: Let the Proxy Download and Manage Chromium**
+- **`CHROMIUM_DIRECTORY`:** The directory where Chromium will be installed and launched from. Required when not using `CHROMIUM_EXECUTABLE_PATH`.
+- **`CHROMIUM_STATIC_VERSION`:** The specific Chromium version to download and use. Required when not using `CHROMIUM_EXECUTABLE_PATH`. You can find branch positions (versions) at [https://chromiumdash.appspot.com/](https://chromiumdash.appspot.com/).
+
+**Required for Both Options**
+- **`CDP_PROXY_PORT`:** The port the proxy will listen on. Defaults to `9222`.
+
+> **Important:** You must choose either Option 1 OR Option 2. Setting both `CHROMIUM_EXECUTABLE_PATH` and either of the Option 2 variables will result in an error.
 
 ### Chromium Management
 
-The proxy includes a script (`scripts/install-chromium.ts`) to download and manage a Chromium instance. This is only relevant if you're using Option 2 (letting the proxy manage Chromium).
+The proxy includes a script (`scripts/install-chromium.ts`) to download and manage a Chromium instance. This is only relevant if you're using Option 2 above (letting the proxy manage Chromium).
 
 *   **Installation:** `deno task install:chromium`
 *   **Force Reinstall:** `deno task install:chromium --force` (This will remove the existing Chromium installation and download a fresh copy.)
@@ -262,4 +244,56 @@ Note: If you're using Option 1 (your own Chrome/Chromium), you don't need to use
 
 ### Proxy Startup as a Library
 
-The `startProxy`
+The `startProxy` function can be imported and used programmatically in your own code:
+
+```typescript
+import { startProxy } from 'cdp-proxy-interceptor'
+
+const port = 9222
+const { cleanup } = await startProxy(port)
+
+// When you're done, clean up resources
+await cleanup()
+```
+
+### Signal Handling
+
+The proxy automatically handles SIGTERM and SIGINT signals, performing a graceful shutdown that:
+1. Stops the Chrome instance
+2. Closes all WebSocket connections
+3. Shuts down the HTTP server
+
+## Development
+
+### Project Structure
+
+```
+cdp-proxy-interceptor/
+├── src/                # Source code
+│   ├── chrome_manager.ts   # Chrome process management
+│   ├── http_manager.ts     # HTTP request handling
+│   ├── plugin_manager.ts   # Plugin system
+│   ├── session_manager.ts  # WebSocket session tracking
+│   └── ws_manager.ts       # WebSocket handling
+├── test/              # Test files
+├── plugins/           # Plugin directory
+└── scripts/          # Utility scripts
+```
+
+### Running Tests
+
+```bash
+deno run tests
+```
+
+### Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat(logging): improved logging'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
