@@ -40,15 +40,39 @@ The core strength of this proxy lies in its flexible plugin system, which allows
    cp .env.example .env
    ```
 
-   Adjust the values in `.env` to suit your setup, such as the `CHROMIUM_STATIC_VERSION` if you plan to use the built-in Chromium management, or the `CHROMIUM_DIRECTORY` if you plan to bring your own copy of Chrome or Chromium (note: will override `CHROMIUM_STATIC_VERSION`).
+   You have two mutually exclusive options for configuring Chrome/Chromium:
 
-3. **Install Chromium (Optional):**
+   **Option 1: Use Your Own Chrome/Chromium**
+   ```env
+   # Point to your existing Chrome/Chromium executable
+   CHROMIUM_EXECUTABLE_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+   ```
 
-   If you want the proxy to install and use it's own Chromium instance for the proxy, you can install it using:
+   **Option 2: Let the Proxy Download and Manage Chromium**
+   ```env
+   # Directory where Chromium will be installed
+   CHROMIUM_DIRECTORY=.cache/chromium
+   # Specific version to download (find versions at https://chromiumdash.appspot.com/)
+   CHROMIUM_STATIC_VERSION=1381568
+   ```
+
+   **Required for Both Options:**
+   ```env
+   # Port for the CDP proxy to listen on
+   CDP_PROXY_PORT=9222
+   ```
+
+   > **Important:** You must choose either Option 1 OR Option 2. Setting both `CHROMIUM_EXECUTABLE_PATH` and either of the Option 2 variables will result in an error.
+
+3. **Install Chromium (Only for Option 2):**
+
+   If you chose Option 2 (letting the proxy manage Chromium), install it using:
 
    ```bash
    deno task install:chromium
    ```
+
+   > Note: Skip this step if you're using your own Chrome/Chromium executable (Option 1).
 
 4. **Start the Proxy Server:**
 
@@ -201,75 +225,41 @@ This plugin creates an `Enhanced.getElementInfo` command that combines `DOM.getB
 
 ### Environment Variables
 
-The proxy uses environment variables for configuration.  You can set these in a `.env` file in the project root.  An example file (`.env.example`) is provided:
+The proxy uses environment variables for configuration. You can set these in a `.env` file in the project root. An example file (`.env.example`) is provided:
 
 ```sh
+# Option 1: Use your own Chrome/Chromium
+CHROMIUM_EXECUTABLE_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
+# Option 2: Let the proxy manage Chromium
 CHROMIUM_DIRECTORY=.cache/chromium
-CDP_PROXY_PORT=9222
-# Checkout https://chromiumdash.appspot.com/
 CHROMIUM_STATIC_VERSION=1381568 # Last stable branch position as of 2025-02-11
+
+# Required for both options
+CDP_PROXY_PORT=9222
 ```
 
-*   **`CHROMIUM_DIRECTORY`:**  The directory where Chromium will be installed and launched from.  Defaults to `.cache/chromium`.
-*   **`CDP_PROXY_PORT`:** The port the proxy will listen on.  Defaults to `9222`.
-*   **`CHROMIUM_STATIC_VERSION`:**  The specific Chromium version to download and use.  If not set, the proxy will attempt to fetch the latest stable version.  This is useful for ensuring consistent behavior across different environments.  You can find branch positions (versions) at [https://chromiumdash.appspot.com/](https://chromiumdash.appspot.com/).
+*   **Option 1: Use Your Own Chrome/Chromium**
+    - **`CHROMIUM_EXECUTABLE_PATH`:** Path to your Chrome or Chromium executable. When set, the proxy will use this executable directly and ignore `CHROMIUM_DIRECTORY` and `CHROMIUM_STATIC_VERSION`.
+
+*   **Option 2: Let the Proxy Manage Chromium**
+    - **`CHROMIUM_DIRECTORY`:** The directory where Chromium will be installed and launched from. Required when not using `CHROMIUM_EXECUTABLE_PATH`.
+    - **`CHROMIUM_STATIC_VERSION`:** The specific Chromium version to download and use. Required when not using `CHROMIUM_EXECUTABLE_PATH`. You can find branch positions (versions) at [https://chromiumdash.appspot.com/](https://chromiumdash.appspot.com/).
+
+*   **Required for Both Options**
+    - **`CDP_PROXY_PORT`:** The port the proxy will listen on. Defaults to `9222`.
 
 ### Chromium Management
 
-The proxy includes a script (`scripts/install-chromium.ts`) to download and manage a Chromium instance.  This simplifies setup and ensures compatibility.
+The proxy includes a script (`scripts/install-chromium.ts`) to download and manage a Chromium instance. This is only relevant if you're using Option 2 (letting the proxy manage Chromium).
 
-*   **Installation:** `deno run install:chromium`
-*   **Force Reinstall:** `deno run install:chromium --force` (This will remove the existing Chromium installation and download a fresh copy.)
+*   **Installation:** `deno task install:chromium`
+*   **Force Reinstall:** `deno task install:chromium --force` (This will remove the existing Chromium installation and download a fresh copy.)
 
 The installed Chromium version is stored in a `.chromium-version` file within the `CHROMIUM_DIRECTORY`.
 
+Note: If you're using Option 1 (your own Chrome/Chromium), you don't need to use this script.
+
 ### Proxy Startup as a Library
 
-The `startProxy` function (in `src/main.ts`) can be used to start the proxy programmatically:
-
-```typescript
-import startProxy from './src/main.ts';
-
-async function main() {
-  const port = 9222; // Or get from environment variable
-  const { cleanup } = await startProxy(port);
-
-  // ... your code here ...
-
-  // When you're done, clean up:
-  await cleanup();
-}
-
-main();
-```
-
-The `cleanup` function handles shutting down the Chromium instance and closing any open connections.
-
-## Plugin Development
-
-Plugins are TypeScript classes that implement the `CDPPlugin` interface:
-
-```typescript
-
-// src/types.ts
-export interface CDPPlugin {
-  name: string;
-  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
-  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
-  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-}
-```
-
-*   **`name`:**  A descriptive name for your plugin.
-*   **`onRequest`:**  Called for each CDP command request.  You can modify the request, block it (by returning `null`), or pass it through unchanged.
-*   **`onResponse`:**  Called for each CDP command response.  You can modify the response or pass it through.
-*   **`onEvent`:**  Called for each CDP event.  You can modify the event or filter it (by returning `null`).
-
-**Important Considerations:**
-
-*   **Asynchronous Operations:**  Plugin methods *must* be `async` and return a `Promise`.
-*   **Error Handling:**  Plugins should handle errors gracefully.  The `PluginManager` catches errors and logs them using the `ErrorHandler`, but unhandled exceptions within a plugin could destabilize the proxy.
-*   **CDP Message Types:**  Familiarize yourself with the `CDPCommandRequest`, `CDPCommandResponse`, and `CDPEvent` types defined in `src/types.ts`. These interfaces define the structure of the messages you'll be working with.
-* **Return `null` to Block:** If any of the `onRequest`, `onResponse`, or `onEvent` methods return `null`, the message will not be not be further processed or forwarded.
-* **Plugin Loading:** The proxy automatically loads plugins from the `plugins` directory on startup. Files must have a `.ts` or `.js` extension and *not* include `.disabled.` in their name to be loaded.
+The `startProxy`

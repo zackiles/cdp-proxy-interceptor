@@ -3,6 +3,7 @@ import { getAvailablePort} from 'jsr:@std/net'
 import { doesProcessWithPortExist } from './utils.ts'
 import { CDPErrorType } from './types.ts'
 import { ErrorHandler } from './error_handler.ts'
+import { getChromiumPaths } from './utils.ts'
 
 const BROWSER_NAME = 'Chromium'
 const DEFAULT_RETRY_CONFIG = { retries: 3, baseDelay: 100 }
@@ -64,8 +65,9 @@ export class ChromeManager {
           this.port = await getAvailablePort()
           await this.killExistingChromeOnPort()
           
+          const { executablePath } = getChromiumPaths()
           this.chrome = await launch({
-            chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            chromePath: executablePath,
             port: this.port,
             chromeFlags: [...CHROME_FLAGS, `--remote-debugging-port=${this.port}`],
             handleSIGINT: true

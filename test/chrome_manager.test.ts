@@ -1,29 +1,31 @@
 import './test_setup.ts'
-import { assertExists, assertEquals, assertNotEquals } from 'jsr:@std/assert'
+import { assertExists, assertEquals, assertNotEquals, assertRejects } from 'jsr:@std/assert'
 import { ChromeManager } from '../src/chrome_manager.ts'
 import { delay } from 'jsr:@std/async'
 import { ErrorHandler } from '../src/error_handler.ts'
+import { getChromiumPaths } from '../src/utils.ts'
 
 const TEST_TIMEOUT = 5000
 const WEBSOCKET_CLOSE_TIMEOUT = 1000
 
-// Create a mock error handler for testing
 const mockErrorHandler = new ErrorHandler()
 
-// Helper function to verify CDP endpoint response
-async function verifyCDPEndpoint(port: number): Promise<boolean> {
+/**
+ * Verifies that a CDP endpoint is responding correctly with all required fields
+ * @param port The port number to check
+ * @returns True if the endpoint is valid and responding correctly
+ */
+const verifyCDPEndpoint = async (port: number): Promise<boolean> => {
   try {
     const response = await fetch(`http://localhost:${port}/json/version`)
     if (!response.ok) return false
+    
     const data = await response.json()
     return (
       typeof data === 'object' &&
       data !== null &&
-      typeof data.Browser === 'string' &&
-      typeof data['Protocol-Version'] === 'string' &&
-      typeof data['User-Agent'] === 'string' &&
-      typeof data['V8-Version'] === 'string' &&
-      typeof data['WebKit-Version'] === 'string' &&
+      ['Browser', 'Protocol-Version', 'User-Agent', 'V8-Version', 'WebKit-Version']
+        .every(field => typeof data[field] === 'string') &&
       typeof data.webSocketDebuggerUrl === 'string' &&
       data.webSocketDebuggerUrl.startsWith('ws://localhost:')
     )
@@ -32,29 +34,30 @@ async function verifyCDPEndpoint(port: number): Promise<boolean> {
   }
 }
 
-// Helper function to safely close WebSocket with timeout
-async function safeCloseWebSocket(ws: WebSocket | undefined): Promise<void> {
-  if (!ws || ws.readyState === WebSocket.CLOSED) {
-    return
-  }
+/**
+ * Safely closes a WebSocket connection with timeout
+ * @param ws The WebSocket to close
+ */
+const safeCloseWebSocket = async (ws: WebSocket | undefined): Promise<void> => {
+  if (!ws?.readyState || ws.readyState === WebSocket.CLOSED) return
 
   try {
-    const closePromise = new Promise<void>((resolve) => {
+    await new Promise<void>((resolve) => {
       const cleanup = () => {
         ws.removeEventListener('close', closeHandler)
         clearTimeout(timeoutId)
         resolve()
       }
+      
       const closeHandler = () => cleanup()
       const timeoutId = setTimeout(() => {
         console.warn('WebSocket close timed out')
         cleanup()
       }, WEBSOCKET_CLOSE_TIMEOUT)
+      
       ws.addEventListener('close', closeHandler)
       ws.close()
     })
-
-    await closePromise
   } catch (error) {
     console.warn('Error closing WebSocket:', error)
   }
@@ -112,6 +115,9 @@ async function waitForWebSocketState(
   }
 }
 
+/**
+ * Tests for the ChromeManager class
+ */
 Deno.test('ChromeManager', async (t) => {
   await t.step('should start Chrome and get WebSocket URL', async () => {
     const chromeManager = new ChromeManager(mockErrorHandler)
@@ -120,7 +126,6 @@ Deno.test('ChromeManager', async (t) => {
       const wsUrl = await chromeManager.start()
       console.log('Chrome started with WebSocket URL:', wsUrl)
 
-      // Verify CDP endpoint is responding correctly
       const port = chromeManager.port
       if (port === undefined) {
         throw new Error('Chrome port is not defined')
@@ -151,12 +156,10 @@ Deno.test('ChromeManager', async (t) => {
         throw new Error('Chrome port is not defined')
       }
 
-      // Test transparent proxying of /json/version endpoint
       const response = await fetch(`http://localhost:${port}/json/version`)
       assertEquals(response.ok, true, 'CDP endpoint should return 200 OK')
 
       const data = await response.json()
-      // Verify response has required fields from Chrome
       assertExists(data.Browser, 'Response should include Browser info')
       assertExists(data['Protocol-Version'], 'Response should include Protocol-Version')
       assertExists(data['User-Agent'], 'Response should include User-Agent')
@@ -164,7 +167,6 @@ Deno.test('ChromeManager', async (t) => {
       assertExists(data['WebKit-Version'], 'Response should include WebKit-Version')
       assertExists(data.webSocketDebuggerUrl, 'Response should include webSocketDebuggerUrl')
 
-      // Verify webSocketDebuggerUrl format
       assertEquals(
         data.webSocketDebuggerUrl.startsWith(`ws://localhost:${port}/devtools/browser/`),
         true,
@@ -248,7 +250,6 @@ Deno.test('ChromeManager', async (t) => {
       const port = chromeManager.port
       if (!port) throw new Error('Chrome port is not defined')
 
-      // Helper to check URLs
       const verifyWebSocketHostname = (value: string) => {
         if (value.startsWith('ws://')) {
           assertEquals(
@@ -259,7 +260,6 @@ Deno.test('ChromeManager', async (t) => {
         }
       }
 
-      // Update the verifyWebSocketUrls function to include hostname check
       const verifyWebSocketUrls = (obj: unknown) => {
         Object.entries(obj as Record<string, unknown>).forEach(([key, value]) => {
           if (typeof value === 'string') {
@@ -283,7 +283,6 @@ Deno.test('ChromeManager', async (t) => {
         })
       }
 
-      // Test all CDP endpoints that might contain WebSocket URLs
       const endpoints = ['/json/version', '/json/list', '/json/new']
       for (const endpoint of endpoints) {
         const response = await fetch(
@@ -301,6 +300,66 @@ Deno.test('ChromeManager', async (t) => {
       }
     } finally {
       await chromeManager.stop()
+    }
+  })
+
+  await t.step('should validate Chrome configuration', async () => {
+    const originalExecPath = Deno.env.get('CHROMIUM_EXECUTABLE_PATH')
+    const originalDir = Deno.env.get('CHROMIUM_DIRECTORY')
+    const originalVersion = Deno.env.get('CHROMIUM_STATIC_VERSION')
+
+    try {
+      Deno.env.delete('CHROMIUM_EXECUTABLE_PATH')
+      Deno.env.delete('CHROMIUM_DIRECTORY')
+      Deno.env.delete('CHROMIUM_STATIC_VERSION')
+      try {
+        getChromiumPaths()
+        throw new Error('Should have thrown')
+      } catch (error: unknown) {
+        assertEquals(error instanceof Error, true)
+        if (error instanceof Error) {
+          assertEquals(
+            error.message.includes('Either CHROMIUM_EXECUTABLE_PATH must be set'),
+            true
+          )
+        }
+      }
+
+      Deno.env.set('CHROMIUM_EXECUTABLE_PATH', '/path/to/chrome')
+      Deno.env.set('CHROMIUM_DIRECTORY', '/path/to/dir')
+      try {
+        getChromiumPaths()
+        throw new Error('Should have thrown')
+      } catch (error: unknown) {
+        assertEquals(error instanceof Error, true)
+        if (error instanceof Error) {
+          assertEquals(
+            error.message.includes('When CHROMIUM_EXECUTABLE_PATH is set'),
+            true
+          )
+        }
+      }
+
+      Deno.env.delete('CHROMIUM_DIRECTORY')
+      Deno.env.delete('CHROMIUM_STATIC_VERSION')
+      const execPathConfig = getChromiumPaths()
+      assertEquals(execPathConfig.executablePath, '/path/to/chrome')
+
+      Deno.env.delete('CHROMIUM_EXECUTABLE_PATH')
+      Deno.env.set('CHROMIUM_DIRECTORY', '/path/to/dir')
+      Deno.env.set('CHROMIUM_STATIC_VERSION', '123456')
+      const managedConfig = getChromiumPaths()
+      assertEquals(managedConfig.directory, '/path/to/dir')
+    } finally {
+      originalExecPath 
+        ? Deno.env.set('CHROMIUM_EXECUTABLE_PATH', originalExecPath)
+        : Deno.env.delete('CHROMIUM_EXECUTABLE_PATH')
+      originalDir
+        ? Deno.env.set('CHROMIUM_DIRECTORY', originalDir)
+        : Deno.env.delete('CHROMIUM_DIRECTORY')
+      originalVersion
+        ? Deno.env.set('CHROMIUM_STATIC_VERSION', originalVersion)
+        : Deno.env.delete('CHROMIUM_STATIC_VERSION')
     }
   })
 })
