@@ -47,7 +47,7 @@ The core strength of this proxy lies in its flexible plugin system, which allows
    If you chose to let the proxy manage Chromium (Option 2 in the [Configuration section](#environment-variables)), install it using:
 
    ```bash
-   deno task install:chromium
+   deno run install:chromium
    ```
 
    > Note: Skip this step if you're using your own Chrome/Chromium executable.
@@ -235,8 +235,8 @@ You have two mutually exclusive options for configuring Chrome/Chromium:
 
 The proxy includes a script (`scripts/install-chromium.ts`) to download and manage a Chromium instance. This is only relevant if you're using Option 2 above (letting the proxy manage Chromium).
 
-*   **Installation:** `deno task install:chromium`
-*   **Force Reinstall:** `deno task install:chromium --force` (This will remove the existing Chromium installation and download a fresh copy.)
+*   **Installation:** `deno run install:chromium`
+*   **Force Reinstall:** `deno run install:chromium --force` (This will remove the existing Chromium installation and download a fresh copy.)
 
 The installed Chromium version is stored in a `.chromium-version` file within the `CHROMIUM_DIRECTORY`.
 
