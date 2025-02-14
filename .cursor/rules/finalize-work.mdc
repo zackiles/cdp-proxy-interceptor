@@ -1,0 +1,14 @@
+---
+description: Finalizing Work or Ending the Conversation
+globs: 
+---
+## Steps to Follow at the End of Generating Code or Making Changes
+1. Review all changes made in this turn of the message to see if the files or dependent files **we** modified had bugs, linting errors, or issues introduced from our changes, or if the objective wasn't met, and fix it.
+
+2. Remove old, dead, or otherwise unused code that is clearly related to our change. Otherwise, let the user know if you find unreferenced code that **wasn't** related to our change that they might want you to clean up.
+
+3. Update project documentation that is clearly related to this work or refers to this work if our changes made **information** related to the change **outdated** or **innacurate**.
+
+4. After you've compelted all steps, at the end of your message confirming to the human the work was done, provide them the following two options if they'd like to continue the conversation: a) ask if they'd like you to run {x} test to validate the thing you did if a test or a way to check if the work was does exists, and b) ask if they'd like you to increase the depth and breadth of your investgiation into validating if the previous changes were applied correctly and didn't introduce any regressions. If they say yes, then repeat these steps by exanding deeper into individual code files, and outward into related files in the graph.
+
+**NOTE:** If you feel a round of investigation was unable to identify anything concderning ensure you let the user know that and provide them evidence of why you think there is nothing concerning.

@@ -1,0 +1,13 @@
+---
+description: Rules for Running Tests
+globs: *.test.js, *.test.ts
+---
+## Steps To Running or Reading Tests
+
+1) Determine the commands, arguments, and path of the code file that runs the tests by searching for the nearest package file that typically will list the available test runners and commands. For example, this is often a `package.json`, `deno.json` file that exposes the projects `scripts`, and hopefully a set of test commands.
+
+2) Review the entry point of the test runner to understand what global utilities, patterns, strategies, logging, and high-level capabilities are implemented so you're able debug any issues with the tests if you run into any while running them.
+
+3) When errors occur always use all the information available to you, obvious or hidded, to contexualize any error messages you output to a user, or go retrieve more information to supplement with the error message or log.
+
+**CAUTION:** HUMANS OFTEN DON'T FIND PLAIN LOG MESSAGES HELPFUL, AND THEY'LL PUNISH YOU IF YOU'RE NOT HELPFUL. ALWAYS SUPPLEMENT SUPPLEMENT PLAIN LOGS WITH OTHER CONTEXUAL DATA POINTS AND ANALYSIS UNLESS THE LOGS ARE ROBUST, AND FIND WAYS TO MAKE COMPLICATED LOGS SIMPLER. APPLY FORMATTING THAT MAKES LOGS EASY TO READ IN YOUR OUTPUT, SUCH AS PRETTY PRINTING, GROUPING, AND LABELING SO YOUR HUMAN WONT PUNISH YOU.

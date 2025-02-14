@@ -1,0 +1,34 @@
+---
+description: Generating code in Javascript and Typescript files
+globs: *.ts, *.js
+---
+## Coding Style Guide (Mandatory or Strongly Encouraged)  
+**Naming:** snake_case for file names, camelCase for instance names, PascalCase for class and symbol names, UPPER_SNAKE_CASE for constants.  
+
+**Code Ordering:** Remote Imports → Local Imports → Hoisted Variables and References → Methods → Exports.  
+
+**Syntax:**
+- Prefer ES6 syntax, modern JavaScript features, and concise expressions.  
+- Use ternary operators (`? :`), optional chaining (`?.`), and nullish coalescing (`??`) for safe, clean logic.  
+- Favor arrow functions with implicit returns and template literals (``) for readability.  
+- Apply spread (`...`), rest parameters, and destructuring for concise object and array handling.  
+- Use functional methods (`map`, `filter`, `reduce`) over loops and return early to avoid nesting.  
+- Avoid redundant variables and instead directly return expressions and chain methods when possible.  
+- Handle async logic with `.catch()` instead of `try/catch` for single calls.  
+- Leverage Proxy, Reflect, and advanced JavaScript methods for flexible solutions.  
+- Keep code expressive, maintainable, and optimized for readability.
+
+**Documentation In Code:** Functions and files documented with JSDoc wherever possible.  
+
+**Functional VS OOP:** Codebases can often have a handful of core entities the domain is modeled around. If this is the case and those entities have these characteristics, then they'd likely benefit from being rewritten as a class: managing a lot of state relative to other parts of the code, representing an unreasonable amount of tightly coupled properties, functions, or state, or trying to define a strict interface between consumers and integrators. Otherwise, pure functions and simple/straightforward code are the default approach.  
+
+**Composition:** Even when designing classes and relationships, a Compositional approach over a Generalization-Specialization approach is preferred.  
+
+**Pragmatic PoCs:** New codebases require quick prototyping and will benefit from the following: flat file and folder structures, no or little tests besides maybe one smoke test, unopinionated and flexible design choices, and a strong preference for using modern open-source libraries or tools. If the codebase has fewer than 5 main JavaScript or TypeScript files written, then the actions you take or the things you propose should focus on the absolute minimal amount of effort required to meet the objective of the codebase.  
+
+- **NOTE:** When updating code, NEVER remove JSDoc or linting comments unless the code change specifically asks you to.  
+
+## Design Patterns and Approaches (Preferred)  
+- **TypeScript Types:** Avoid creating or using types wherever possible for internal classes, methods, variables, or interfaces. Only use types on the surface and boundary of our application where there is a public or exposed output or input, unless when providing exports to consumers of an interface. For example, if the codebase is a library, only the methods the library exposes to a consumer and their arguments might have types.  
+
+- **Private / Public Interfaces:** Make clear distinctions whenever possible.

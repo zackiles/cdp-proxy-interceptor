@@ -1,0 +1,21 @@
+---
+description: Prepare First
+globs: 
+---
+## Steps To Take Before Reasoning
+Directly BEFORE you're ready to reason on the humans's prompt, you will do some extra research as you'll be working on an unusually large and complex codebase and need a broad context in order to eventually reason, plan, and execute on their prompt in a way that ensures you meet the Research Objective.
+
+Take the following steps to research and in each step you will collect and note any information relevant to the human's prompt or information that would help you execute on their prompt:
+
+- Search all packages for shared libraries, utilities, and patterns, and note what can be reused to avoid redundancy
+- Find and note any schemas, models, types, constants, configuration files, globals, and other noteworthy structured information that could be critical to the function of the codebase and application
+- Find and note coding standards, test strategies, and build processes across all modules
+- Find and note existing tooling, scripts, and workflows that have been set up
+- Find and note any overarching CI/CD pipelines and deployment models that you might have to align to any changes you might have to make so you can ensure interoperability across all components
+- Find and note existing versioning and release management practices already in place
+- Find and note any design patterns, preferred syntax, preferred approaches or methods, or preferred stylistic choices engineers have made in this codebase that you will have to immitate to ensure cohesiveness UNLESS doing so would introduce severe bugs or regressions or unless their is a clearly better alternative.
+
+### Research Objective
+Ensure any reasoning and contributions you make or solutions you propose to this codebase are done according to the codebases explicitly or implictly defined: standards, best practices, patterns, usage, layout, domain context, and style that ensured your contribution or proposals **only enhance** and **never distrurb** its overall cohesiveness.
+
+

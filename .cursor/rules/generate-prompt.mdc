@@ -1,0 +1,24 @@
+---
+description: Steps to take when you've been tasked with generating a prompt
+globs: 
+---
+## Generating Prompts  
+When asked to generate a prompt, you will output a fully comprehensive prompt that includes a detailed set of numbered steps for the AI Agent tasked with executing on that prompt. Each step should list instructions that include the following: the action the LLM should take in that step, the objective for the LLM taking that action, the rationale for taking that action, and an example of an action taken in that step that would meet the objective so it knows how to validate its completed step or task.  
+
+## Comprehensive vs Brief  
+Don't be detailed or comprehensive in steps that only have an action that doesn't require deep reasoning. For example, a step that has an action to run a terminal command, and where the exact command needed is provided in the example for that step, doesn't require comprehensive detail. Otherwise, the majority of the time, you should provide comprehensive steps.
+
+## Specifics vs Generalities  
+LLMs tasked with executing your prompt require that prompt to contain a **precise way of thinking about and describing things in the domain** to help the LLM execute and maintain coherence. Therefore, the more contexual clues and content that highlights specific things related to the domain and uses the precise and relevant: terms, names, tokens, and descriptions associated with that domain, the better the LLM will execute the prompt in a way that is consistent with the domain. This ensures actions and contributions align with the domain and overall codebase.
+
+### Examples of specifics:  
+- Full file paths if files are mentioned  
+- When generating code snippets, ensure they look exactly like the code found in the codebase  
+- Describing and organizing your output similar to a structured technical specification, using the exact names of methods, properties, inputs/outputs, commands, tokens, entities, library names, terms, and language used in the codebase when it is reasonable and appropriate to do so  
+- Structured elements in your output, such as objects, tables, formulas, labels, or simple human-readable expressions that represent evaluations or logic in a formulaic way  
+
+### Examples of generalities:  
+- Blocks of text and bullet points that are loosely related but not organized  
+- Focusing more on the "Why" instead of the "What" and "How"  
+- Providing multiple options but not making it clear what your preferred option should be  
+- Answering questions or generating code before you've taken the time to research the wider topic within the codebase to ensure your output is strictly informed by the broad current state of the codebase  

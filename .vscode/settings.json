@@ -1,0 +1,6 @@
+{
+  "deno.enable": true,
+  "deno.lint": true,
+  "deno.enablePaths": ["src", "scripts", "test", "plugins"],
+  "editor.formatOnSave": true
+}
