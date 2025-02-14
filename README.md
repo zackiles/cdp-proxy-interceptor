@@ -155,7 +155,7 @@ export default {
 
 ### 4. Extending CDP with Custom Commands
 
-You can create plugins that add new commands or enhance existing CDP commands. This allows you to build higher-level abstractions or combine multiple CDP commands into a single operation.
+You can create plugins that adds new commands or enhances existing CDP commands. This allows you to build higher-level abstractions or combine multiple CDP commands into a single operation.
 
 **Example (Enhanced DOM Query):**
 
