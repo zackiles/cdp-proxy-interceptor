@@ -25,10 +25,10 @@ The core strength of this proxy lies in its flexible plugin system, which allows
 
 1. **Clone the Repository:**
 
-   Clone the repository to your local machine:
+   Clone the repository to your local machine (Note: have Deno installed):
 
    ```bash
-   git clone <repository_url>
+   git clone git@github.com:zackiles/cdp-proxy-interceptor.git
    cd cdp-proxy-interceptor
    ```
 
