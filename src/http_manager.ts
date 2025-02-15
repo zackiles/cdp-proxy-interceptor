@@ -10,46 +10,68 @@ import { CDP_WEBSOCKET_PATHS } from './constants.ts'
 export class HttpManager {
   constructor(
     private readonly chromeManager: ChromeManager,
-    private readonly errorHandler: ErrorHandler
+    private readonly errorHandler: ErrorHandler,
   ) {}
 
   /**
    * Handles incoming HTTP requests and proxies them to Chrome
    */
-  async handleRequest(req: Request, url: URL, proxyPort: number): Promise<Response> {
+  async handleRequest(
+    req: Request,
+    url: URL,
+    proxyPort: number,
+  ): Promise<Response> {
     try {
-      const chromePort = this.chromeManager.port ?? (() => { throw new Error('Chrome not started') })()
-      const chromeUrl = new URL(`http://localhost:${chromePort}${url.pathname}${url.search}`)
-      
+      const chromePort =
+        this.chromeManager.port ??
+        (() => {
+          throw new Error('Chrome not started')
+        })()
+
       const { method, headers, body } = req
-      const chromeResponse = await fetch(chromeUrl, { method, headers, body })
+      const chromeUrl = `http://localhost:${chromePort}${url.pathname}${url.search}`
+      const chromeResponse = await fetch(new URL(chromeUrl), {
+        method,
+        headers,
+        body,
+      })
       const { status, headers: responseHeaders } = chromeResponse
       const responseData = await chromeResponse.json().catch(() => null)
 
       return responseData && typeof responseData === 'object'
-        ? new Response(
-            JSON.stringify(this.rewriteResponse(responseData, `${url.hostname}:${proxyPort}`)),
-            {
-              status,
-              headers: new Headers({ 
-                ...Object.fromEntries(responseHeaders.entries()), 
-                'Content-Type': 'application/json' 
-              })
-            }
+        ? this.createJsonResponse(
+            this.rewriteResponse(responseData, `${url.hostname}:${proxyPort}`),
+            status,
+            responseHeaders,
           )
-        : new Response(chromeResponse.body, { status, headers: responseHeaders })
+        : new Response(chromeResponse.body, {
+            status,
+            headers: responseHeaders,
+          })
     } catch (error) {
-      const errorResponse = this.errorHandler.handleError({
-        type: CDPErrorType.CONNECTION,
-        code: 500,
-        message: String(error),
-        recoverable: true,
-      })
-      return new Response(JSON.stringify({ error: errorResponse }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      })
+      return this.createErrorResponse(error)
     }
+  }
+
+  private createJsonResponse(data: unknown, status: number, headers: Headers) {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: new Headers({
+        ...Object.fromEntries(headers.entries()),
+        'Content-Type': 'application/json',
+      }),
+    })
+  }
+
+  private createErrorResponse(error: unknown) {
+    const errorResponse = this.errorHandler.handleError({
+      type: CDPErrorType.CONNECTION,
+      code: 500,
+      message: String(error),
+      recoverable: true,
+    })
+
+    return this.createJsonResponse({ error: errorResponse }, 500, new Headers())
   }
 
   /**
@@ -57,10 +79,29 @@ export class HttpManager {
    */
   private rewriteResponse(data: unknown, proxyHost: string): unknown {
     if (!data || typeof data !== 'object') return data
-    if (Array.isArray(data)) return data.map(item => this.rewriteResponse(item, proxyHost))
+    if (Array.isArray(data))
+      return data.map((item) => this.rewriteResponse(item, proxyHost))
 
-    const result = { ...data as CDPResponse }
-    const rewriteWsUrl = (url: string) => {
+    const result = { ...(data as CDPResponse) }
+
+    // Apply WebSocket URL rewrites
+    this.rewriteWebSocketUrls(result, proxyHost)
+    this.rewriteOtherWebSocketPaths(result, proxyHost)
+
+    return result
+  }
+
+  private rewriteWebSocketUrls(result: CDPResponse, proxyHost: string) {
+    const rewriteWsUrl = this.createWsUrlRewriter(proxyHost)
+    const rewriteWsParam = this.createWsParamRewriter(rewriteWsUrl)
+
+    result.webSocketDebuggerUrl &&= rewriteWsUrl(result.webSocketDebuggerUrl)
+    result.devtoolsFrontendUrl &&= rewriteWsParam(result.devtoolsFrontendUrl)
+    result.debuggerUrl &&= rewriteWsUrl(result.debuggerUrl)
+  }
+
+  private createWsUrlRewriter(proxyHost: string) {
+    return (url: string) => {
       try {
         const wsUrlObj = new URL(url)
         wsUrlObj.hostname = 'localhost'
@@ -71,32 +112,34 @@ export class HttpManager {
         return url
       }
     }
+  }
 
-    const rewriteWsParam = (url: string) => url.replace(
-      /ws=([^&]+)/g,
-      (_, wsUrl) => {
+  private createWsParamRewriter(rewriteWsUrl: (url: string) => string) {
+    return (url: string) =>
+      url.replace(/ws=([^&]+)/g, (_, wsUrl) => {
         const decodedWs = decodeURIComponent(wsUrl)
-        const fullWsUrl = decodedWs.startsWith('ws://') ? decodedWs : `ws://${decodedWs}`
+        const fullWsUrl = decodedWs.startsWith('ws://')
+          ? decodedWs
+          : `ws://${decodedWs}`
         return `ws=${encodeURIComponent(rewriteWsUrl(fullWsUrl).replace('ws://', ''))}`
-      }
-    )
+      })
+  }
 
-    // Rewrite various WebSocket URLs
-    result.webSocketDebuggerUrl &&= rewriteWsUrl(result.webSocketDebuggerUrl)
-    result.devtoolsFrontendUrl &&= rewriteWsParam(result.devtoolsFrontendUrl)
-    result.debuggerUrl &&= rewriteWsUrl(result.debuggerUrl)
+  private rewriteOtherWebSocketPaths(result: CDPResponse, proxyHost: string) {
+    const rewriteWsUrl = this.createWsUrlRewriter(proxyHost)
+    const rewriteWsParam = this.createWsParamRewriter(rewriteWsUrl)
 
-    // Handle any other URLs with WebSocket paths
-    Object.entries(result).forEach(([key, value]) => {
-      if (typeof value === 'string' && CDP_WEBSOCKET_PATHS.some(path => value.includes(path))) {
+    for (const [key, value] of Object.entries(result)) {
+      if (
+        typeof value === 'string' &&
+        CDP_WEBSOCKET_PATHS.some((path) => value.includes(path))
+      ) {
         result[key] = value.startsWith('ws://')
           ? rewriteWsUrl(value)
           : value.includes('ws=')
             ? rewriteWsParam(value)
             : value
       }
-    })
-
-    return result
+    }
   }
-} 
+}
