@@ -6,7 +6,7 @@
 
 The `cdp-proxy-interceptor` is a transparent man-in-the-middle (MITM) proxy for the Chrome DevTools Protocol (CDP). Intercept, modify, inject, and filter messages between a CDP-enabled browser and any clients interacting with it such as Playwright or Puppeteer.
 
-The core strength of this proxy lies in its flexible plugin system, which allows users to write anything from basic intercepts, to advanced plugins that can extend and enhance the capabilities of their CDP client. Some examples of what you could do with a plugin:
+The core strength of this proxy lies in its [flexible plugin system](docs/plugin-specification.md), which allows users to write anything from basic intercepts, to advanced plugins that can extend and enhance the capabilities of their CDP client. Some examples of what you could do with a plugin:
 
 - **Workload Management:** Intercept your Playwright requests and generate distributed workloads from it that spin up multiple browsers and fan out the work evenly, seamlessly, and transparently to your client code.
 - **Stealth Modifications:** Playwright uses `Runtime.enable` on every page by default which is now freqeuntly detected as automation. Current approaches such as [github.com/rebrowser/rebrowser-patches](https://github.com/rebrowser/rebrowser-patches) rely on brittle code-patches made to Playwright's code directly that attempt to block Playwrights attempts to replace `Runtime.enable` and provide context ids to Playwright a different way that accessing the page. With this proxy, you don't need to patch any code, and can simply write a plugin to overwrite requests to `Runtime.enable`
@@ -83,6 +83,8 @@ The core strength of this proxy lies in its flexible plugin system, which allows
 ### 1. Modifying User Agent
 
 You can use a plugin to modify the user agent reported by the browser. This is useful for testing responsive designs or accessing content that's tailored to specific browsers or devices.
+
+For complete details on plugin development, see the [Plugin Specification](docs/plugin-specification.md).
 
 **Example (using a modified `advanced_plugin.ts`):**
 
@@ -257,7 +259,7 @@ This plugin creates an `Enhanced.getElementInfo` command that combines `DOM.getB
 
 ### Plugin Interface Details
 
-The CDP Proxy Interceptor provides a robust plugin interface with several key methods and capabilities:
+The CDP Proxy Interceptor provides a robust plugin interface with several key methods and capabilities. For the complete plugin specification, see [Plugin Specification](docs/plugin-specification.md).
 
 #### Core Plugin Methods
 
