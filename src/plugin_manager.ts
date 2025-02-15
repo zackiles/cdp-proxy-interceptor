@@ -6,6 +6,8 @@ import type {
   CDPMessage,
 } from './types.ts'
 import type { ErrorHandler } from './error_handler.ts'
+import type { SessionManager } from './session_manager.ts'
+import type { WebSocketManager } from './websocket_manager.ts'
 import { CDPErrorType } from './types.ts'
 
 type PluginMethod = 'onRequest' | 'onResponse' | 'onEvent'
@@ -16,16 +18,30 @@ type PluginError = {
   stack?: string
 }
 
+interface PluginRequestPromise {
+  resolve: (value: CDPCommandResponse) => void
+  reject: (reason?: unknown) => void
+  timeoutId: number
+}
+
 /**
  * Manages CDP plugins for request/response/event processing
  */
 export class PluginManager {
   private static readonly PLUGIN_ERROR_CODE = 2002
   private static readonly INVALID_PLUGIN_CODE = 2001
+  private static readonly PLUGIN_MESSAGE_ID_BASE = 1000000000
+  private static readonly PLUGIN_COMMAND_TIMEOUT = 5000 // 5 seconds
 
   private readonly plugins: CDPPlugin[] = []
+  private pluginMessageIdCounter = PluginManager.PLUGIN_MESSAGE_ID_BASE
+  private readonly pluginRequestIdMap = new Map<number, PluginRequestPromise>()
 
-  constructor(private readonly errorHandler: ErrorHandler) {}
+  constructor(
+    private readonly errorHandler: ErrorHandler,
+    private readonly sessionManager: SessionManager,
+    private readonly wsManager: WebSocketManager,
+  ) {}
 
   registerPlugin(plugin: CDPPlugin): void {
     if (!this.isValidPlugin(plugin)) {
@@ -62,21 +78,57 @@ export class PluginManager {
   async processMessage(message: unknown): Promise<CDPMessage | null> {
     const cdpMessage = message as CDPMessage
     
-    let processedMessage: CDPMessage | null = cdpMessage
-    for (const plugin of this.plugins) {
-      if (!processedMessage) break
-      
-      if ('id' in processedMessage) {
-        if ('result' in processedMessage || 'error' in processedMessage) {
-          processedMessage = await plugin.onResponse?.(processedMessage as CDPCommandResponse) ?? processedMessage
+    // Add debug logging
+    console.debug(`[CDP PLUGIN] Processing message:`, cdpMessage)
+    
+    // Check if this is a response to a plugin-initiated command
+    if (this.isCommandResponse(cdpMessage)) {
+      const { id } = cdpMessage
+      const pendingRequest = this.pluginRequestIdMap.get(id)
+      if (pendingRequest) {
+        console.debug(`[CDP PLUGIN] Found pending request for ID ${id}`)
+        const { resolve, reject, timeoutId } = pendingRequest
+        clearTimeout(timeoutId)
+        this.pluginRequestIdMap.delete(id)
+        
+        if ('error' in cdpMessage && cdpMessage.error) {
+          console.debug(`[CDP PLUGIN] Rejecting pending request with error:`, cdpMessage.error)
+          reject(new Error(cdpMessage.error.message || 'Unknown CDP error'))
         } else {
-          processedMessage = await plugin.onRequest?.(processedMessage as CDPCommandRequest) ?? processedMessage
+          console.debug(`[CDP PLUGIN] Resolving pending request with result:`, cdpMessage.result)
+          resolve(cdpMessage)
         }
-      } else if ('method' in processedMessage) {
-        processedMessage = await plugin.onEvent?.(processedMessage as CDPEvent) ?? processedMessage
+        return null // Don't forward plugin responses to the client
       }
     }
     
+    let processedMessage: CDPMessage | null = cdpMessage
+    for (const plugin of this.plugins) {
+      if (!processedMessage) {
+        console.debug(`[CDP PLUGIN] Message blocked by previous plugin`)
+        break
+      }
+      
+      try {
+        if ('id' in processedMessage) {
+          if ('result' in processedMessage || 'error' in processedMessage) {
+            console.debug(`[CDP PLUGIN] Processing response through plugin ${plugin.name}`)
+            processedMessage = await plugin.onResponse?.(processedMessage as CDPCommandResponse) ?? processedMessage
+          } else {
+            console.debug(`[CDP PLUGIN] Processing request through plugin ${plugin.name}`)
+            processedMessage = await plugin.onRequest?.(processedMessage as CDPCommandRequest) ?? processedMessage
+          }
+        } else if ('method' in processedMessage) {
+          console.debug(`[CDP PLUGIN] Processing event through plugin ${plugin.name}`)
+          processedMessage = await plugin.onEvent?.(processedMessage as CDPEvent) ?? processedMessage
+        }
+      } catch (error) {
+        console.error(`[CDP PLUGIN] Error in plugin ${plugin.name}:`, error)
+        this.handlePluginError(plugin, 'processMessage', error)
+      }
+    }
+    
+    console.debug(`[CDP PLUGIN] Final processed message:`, processedMessage)
     return processedMessage
   }
 
@@ -135,4 +187,77 @@ export class PluginManager {
   clearPlugins = (): void => {
     this.plugins.length = 0
   }
+
+  /**
+   * Sends a CDP command on behalf of a plugin
+   */
+  async sendCDPCommand(
+    plugin: CDPPlugin,
+    endpoint: string,
+    proxySessionId: string,
+    message: CDPCommandRequest
+  ): Promise<CDPCommandResponse> {
+    const session = this.sessionManager.getSession(proxySessionId)
+    if (!session) {
+      throw new Error(`Invalid proxy session ID: ${proxySessionId}`)
+    }
+
+    const { chromeSocket } = session
+    if (chromeSocket.readyState !== WebSocket.OPEN) {
+      throw new Error('Chrome WebSocket connection is not open')
+    }
+
+    // Generate a unique plugin message ID
+    const pluginMessageId = this.pluginMessageIdCounter++
+    message.id = pluginMessageId
+
+    return new Promise<CDPCommandResponse>((resolve, reject) => {
+      try {
+        // Set up timeout
+        const timeoutId = setTimeout(() => {
+          const pendingRequest = this.pluginRequestIdMap.get(pluginMessageId)
+          if (pendingRequest) {
+            this.pluginRequestIdMap.delete(pluginMessageId)
+            reject(new Error(`CDP command timed out after ${PluginManager.PLUGIN_COMMAND_TIMEOUT}ms`))
+          }
+        }, PluginManager.PLUGIN_COMMAND_TIMEOUT)
+
+        // Store the promise handlers
+        this.pluginRequestIdMap.set(pluginMessageId, { resolve, reject, timeoutId })
+
+        // Send the message
+        chromeSocket.send(JSON.stringify(message))
+      } catch (error) {
+        this.pluginRequestIdMap.delete(pluginMessageId)
+        reject(error)
+      }
+    })
+  }
+
+  /**
+   * Emits a CDP event to the client on behalf of a plugin
+   */
+  async emitClientEvent(
+    proxySessionId: string,
+    event: CDPEvent
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(proxySessionId)
+    if (!session) {
+      throw new Error(`Invalid proxy session ID: ${proxySessionId}`)
+    }
+
+    const { clientSocket } = session
+    if (clientSocket.readyState !== WebSocket.OPEN) {
+      throw new Error('Client WebSocket connection is not open')
+    }
+
+    try {
+      clientSocket.send(JSON.stringify(event))
+    } catch (error) {
+      throw new Error(`Failed to emit client event: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  private isCommandResponse = (msg: CDPMessage): msg is CDPCommandResponse =>
+    'id' in msg && !('method' in msg)
 }

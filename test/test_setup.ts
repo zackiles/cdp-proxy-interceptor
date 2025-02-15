@@ -3,8 +3,8 @@ import { getChromiumPaths } from '../src/utils.ts'
 
 // Add any additional test setup here
 // For example, setting up global test hooks, mocks, or utilities
+// Enable logging of CDP messages in Playwright
 
-// Validate Chrome/Chromium configuration
 try {
   getChromiumPaths()
 } catch (error: unknown) {
@@ -12,10 +12,9 @@ try {
   console.warn(`Warning: ${message}. Some tests may fail.`)
 }
 
-// Enable logging of CDP messages in Playwright
 Deno.env.set("DEBUG", "pw:protocol")
-
 Deno.env.set('DENO_ENV', 'test')
 
 // Basic test setup file
 // Add any global test configuration here
+

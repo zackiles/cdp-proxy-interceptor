@@ -2,26 +2,7 @@ import './test_setup.ts'
 import { assertRejects, assertExists, assertEquals } from 'jsr:@std/assert'
 import { SessionManager } from '../src/session_manager.ts'
 import { ErrorHandler } from '../src/error_handler.ts'
-
-class MockWebSocket {
-  readyState = 1 // WebSocket.OPEN
-  onclose?: () => void
-  onerror?: (error: Event) => void
-
-  close() {
-    this.readyState = 3 // WebSocket.CLOSED
-    if (this.onclose) {
-      this.onclose()
-    }
-  }
-
-  // Add error simulation capability
-  simulateError() {
-    if (this.onerror) {
-      this.onerror(new Event('error'))
-    }
-  }
-}
+import { MockWebSocket } from './mock_websocket.ts'
 
 Deno.test('SessionManager', async (t) => {
   const errorHandler = new ErrorHandler()
@@ -53,8 +34,8 @@ Deno.test('SessionManager', async (t) => {
     name: 'should create and retrieve sessions',
     fn: async () => {
       setup()
-      const clientSocket = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket = new MockWebSocket() as unknown as WebSocket
+      const clientSocket = new MockWebSocket('ws://client')
+      const chromeSocket = new MockWebSocket('ws://chrome')
       const chromeWsUrl = 'ws://test-url'
 
       const session = sessionManager.createSession(
@@ -105,8 +86,8 @@ Deno.test('SessionManager', async (t) => {
     name: 'should remove sessions',
     async fn() {
       await cleanupSessions()
-      const clientSocket = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket = new MockWebSocket() as unknown as WebSocket
+      const clientSocket = new MockWebSocket('ws://client')
+      const chromeSocket = new MockWebSocket('ws://chrome')
       const chromeWsUrl = 'ws://test-url'
 
       const session = sessionManager.createSession(
@@ -140,10 +121,10 @@ Deno.test('SessionManager', async (t) => {
     fn: async () => {
       setup()
       await cleanupSessions()
-      const clientSocket1 = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket1 = new MockWebSocket() as unknown as WebSocket
-      const clientSocket2 = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket2 = new MockWebSocket() as unknown as WebSocket
+      const clientSocket1 = new MockWebSocket('ws://client1')
+      const chromeSocket1 = new MockWebSocket('ws://chrome1')
+      const clientSocket2 = new MockWebSocket('ws://client2')
+      const chromeSocket2 = new MockWebSocket('ws://chrome2')
 
       const session1 = sessionManager.createSession(
         clientSocket1,
@@ -179,10 +160,10 @@ Deno.test('SessionManager', async (t) => {
     fn: async () => {
       setup()
       await cleanupSessions()
-      const clientSocket1 = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket1 = new MockWebSocket() as unknown as WebSocket
-      const clientSocket2 = new MockWebSocket() as unknown as WebSocket
-      const chromeSocket2 = new MockWebSocket() as unknown as WebSocket
+      const clientSocket1 = new MockWebSocket('ws://client1')
+      const chromeSocket1 = new MockWebSocket('ws://chrome1')
+      const clientSocket2 = new MockWebSocket('ws://client2')
+      const chromeSocket2 = new MockWebSocket('ws://chrome2')
 
       const session1 = sessionManager.createSession(
         clientSocket1,

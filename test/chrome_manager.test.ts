@@ -4,6 +4,7 @@ import { ChromeManager } from '../src/chrome_manager.ts'
 import { delay } from 'jsr:@std/async'
 import { ErrorHandler } from '../src/error_handler.ts'
 import { getChromiumPaths } from '../src/utils.ts'
+import { MockWebSocket } from './mock_websocket.ts'
 
 const TEST_TIMEOUT = 5000
 const WEBSOCKET_CLOSE_TIMEOUT = 1000
@@ -39,7 +40,7 @@ const verifyCDPEndpoint = async (port: number): Promise<boolean> => {
  * @param ws The WebSocket to close
  */
 const safeCloseWebSocket = async (ws: WebSocket | undefined): Promise<void> => {
-  if (!ws?.readyState || ws.readyState === WebSocket.CLOSED) return
+  if (!ws?.readyState || ws.readyState === MockWebSocket.CLOSED) return
 
   try {
     await new Promise<void>((resolve) => {
@@ -221,20 +222,21 @@ Deno.test('ChromeManager', async (t) => {
 
   await t.step('should track WebSocket connections', async () => {
     const chromeManager = new ChromeManager(mockErrorHandler)
-    let mockWs: WebSocket | undefined
+    let mockWs: MockWebSocket | undefined
     try {
       await chromeManager.start()
-      mockWs = new WebSocket('ws://localhost:1234')
+      mockWs = new MockWebSocket('ws://localhost:1234')
 
-      // Wait for WebSocket to be in CONNECTING state
-      await waitForWebSocketState(
-        mockWs,
-        () => mockWs?.readyState === WebSocket.CONNECTING,
-        TEST_TIMEOUT,
-      )
-
+      // WebSocket starts in CONNECTING state by default
+      assertEquals(mockWs.readyState, MockWebSocket.CONNECTING)
       chromeManager.registerConnection(mockWs)
       assertEquals(chromeManager.getConnectionCount(), 1)
+
+      // Simulate successful connection
+      mockWs.simulateOpen()
+      assertEquals(mockWs.readyState, MockWebSocket.OPEN)
+
+      // Test unregistering
       chromeManager.unregisterConnection(mockWs)
       assertEquals(chromeManager.getConnectionCount(), 0)
     } finally {

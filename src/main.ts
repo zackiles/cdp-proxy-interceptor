@@ -18,8 +18,9 @@ const createComponents = async () => {
   const chromeManager = new ChromeManager(errorHandler)
   const sessionManager = new SessionManager(errorHandler)
   const schemaValidator = new SchemaValidator()
-  const pluginManager = new PluginManager(errorHandler)
-  const wsManager = new WebSocketManager(errorHandler, schemaValidator, pluginManager)
+  const wsManager = new WebSocketManager(errorHandler, schemaValidator, null)
+  const pluginManager = new PluginManager(errorHandler, sessionManager, wsManager)
+  wsManager.setPluginManager(pluginManager)
   const httpManager = new HttpManager(chromeManager, errorHandler)
 
   const loadPlugins = async () => {
@@ -69,61 +70,111 @@ const handleWebSocketUpgrade = async (
   req: Request,
   { chromeManager, sessionManager, wsManager }: ProxyComponents
 ): Promise<Response> => {
+  console.log(`[CDP PROXY] Handling WebSocket upgrade for ${req.url}`)
   const { socket: clientSocket, response } = Deno.upgradeWebSocket(req)
   const url = new URL(req.url)
   const path = `${url.pathname}${url.search}`
   
-  const chromeWsUrl = url.pathname.includes('/devtools/browser')
-    ? await chromeManager.getWebSocketUrl()
-    : req.url.replace(url.host, `localhost:${chromeManager.port}`)
-  
-  const chromeSocket = new WebSocket(chromeWsUrl)
-  
-  // Use object spread for socket properties
-  Object.assign(clientSocket, { _path: path })
-  Object.assign(chromeSocket, { _path: path })
-  
-  const session = sessionManager.createSession(clientSocket, chromeSocket, chromeWsUrl)
-  await wsManager.handleConnection(clientSocket, chromeSocket, session.id)
-  
-  return response
+  try {
+    const chromeWsUrl = url.pathname.includes('/devtools/browser')
+      ? await chromeManager.getWebSocketUrl()
+      : req.url.replace(url.host, `localhost:${chromeManager.port}`)
+    
+    console.log(`[CDP PROXY] Connecting to Chrome at ${chromeWsUrl}`)
+    const chromeSocket = new WebSocket(chromeWsUrl)
+    
+    // Wait for Chrome socket to be ready with increased timeout
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Chrome WebSocket connection timeout after 30 seconds'))
+      }, 30000) // Increased to match Playwright's timeout
+
+      chromeSocket.onopen = () => {
+        console.log(`[CDP PROXY] Chrome WebSocket connection established`)
+        clearTimeout(timeout)
+        resolve()
+      }
+
+      chromeSocket.onerror = (event) => {
+        console.error(`[CDP PROXY] Chrome WebSocket connection error:`, event)
+        clearTimeout(timeout)
+        reject(new Error(`Chrome WebSocket connection failed: ${event}`))
+      }
+    })
+    
+    // Use object spread for socket properties
+    console.log(`[CDP PROXY] Setting up socket properties for ${path}`)
+    Object.assign(clientSocket, { _path: path })
+    Object.assign(chromeSocket, { _path: path })
+    
+    console.log(`[CDP PROXY] Creating session for WebSocket connection`)
+    const session = sessionManager.createSession(clientSocket, chromeSocket, chromeWsUrl)
+    console.log(`[CDP PROXY] Handling WebSocket connection in WebSocketManager`)
+    await wsManager.handleConnection(clientSocket, chromeSocket, session.id)
+    
+    console.log(`[CDP PROXY] Successfully established WebSocket connection for ${path}`)
+    return response
+  } catch (error) {
+    console.error(`[CDP PROXY] WebSocket upgrade failed:`, error)
+    throw error
+  }
 }
 
 /**
  * Starts a Chrome DevTools Protocol proxy server
  */
 export default async function startProxy(port: number) {
-  console.log(`Starting CDP proxy on port ${port}...`)
+  console.log(`[CDP PROXY] Starting CDP proxy on port ${port}...`)
   const abortController = new AbortController()
   
   try {
     const components = await createComponents()
     
-    const cleanup = async () => {
-      try {
-        await components.chromeManager.stop()
+    // Verify Chrome is ready
+    console.log(`[CDP PROXY] Waiting for Chrome to be ready...`)
+    await components.chromeManager.getWebSocketUrl()
+    console.log(`[CDP PROXY] Chrome is ready`)
+
+    const server = Deno.serve({
+      port,
+      signal: abortController.signal,
+      onError: (error) => {
+        console.error(`[CDP PROXY] Server error:`, error)
+        return new Response('Internal Server Error', { status: 500 })
+      },
+      handler: async (req: Request) => {
+        try {
+          if (req.headers.get("upgrade") === "websocket") {
+            return await handleWebSocketUpgrade(req, components)
+          }
+          const url = new URL(req.url)
+          return await components.httpManager.handleRequest(req, url, port)
+        } catch (error) {
+          console.error(`[CDP PROXY] Request handler error:`, error)
+          throw error
+        }
+      },
+    })
+
+    console.log(`[CDP PROXY] Server started successfully on port ${port}`)
+
+    return {
+      server,
+      cleanup: async () => {
+        console.log(`[CDP PROXY] Cleaning up...`)
         abortController.abort()
-        await server.finished
-      } catch (error) {
-        console.error('Error during cleanup:', error)
-        throw error
+        
+        // Clean up any active sessions
+        for (const session of components.sessionManager.getActiveSessions()) {
+          await components.wsManager.cleanup(session.id)
+        }
+        
+        await components.chromeManager.stop()
+        console.log(`[CDP PROXY] Cleanup complete`)
       }
     }
-
-    // Create server after all setup is complete
-    const server = Deno.serve(
-      { port, signal: abortController.signal },
-      req => {
-        const url = new URL(req.url)
-        return req.headers.get('upgrade')?.toLowerCase() === 'websocket'
-          ? handleWebSocketUpgrade(req, components)
-          : components.httpManager.handleRequest(req, url, port)
-      }
-    )
-
-    return { cleanup, abortController, server }
   } catch (error) {
-    abortController.abort()
+    console.error(`[CDP PROXY] Failed to start proxy:`, error)
     throw error
   }
 }
