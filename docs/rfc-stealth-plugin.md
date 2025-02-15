@@ -35,8 +35,8 @@ This is effectively the same outcome as the patches, but done externally in the 
 ---
 
 ## 4. Exact Modifications Recap
-
 From prior research (and the patch details), to hide `Runtime.enable`:
+
 - **Skip** the real `Runtime.enable` call to the browser. The site’s detection scripts never see any unusual extra DevTools runtime domain overhead.
 - **Fake** the success response and relevant events that `Runtime.enable` would normally produce.  
 - **Handle new frames or workers** by manually forging new contexts. Otherwise, Playwright breaks if it never sees `Runtime.executionContextCreated` for each frame.
@@ -44,7 +44,6 @@ From prior research (and the patch details), to hide `Runtime.enable`:
 ---
 
 ## 5. Example Implementation
-
 Below is a fully working **plugin** that you would drop into a MITM proxy. It has three hooks:
 
 - `onRequest(request)`  
@@ -56,18 +55,17 @@ We also use an internal helper to call the real DevTools (`this.sendCDPCommand`)
 **Key Points**  
 1. We watch for `Runtime.enable` requests. We skip sending them on, but instantly return a “success” `{"id":..., "result":{}}` so the client remains unaware.  
 2. We watch for new frames, workers, and any other triggers that normally cause an `executionContextId` to appear. We create an isolated world or binding on the real browser, capture the ID, and emit the synthetic `Runtime.executionContextCreated`.  
-
-> **Note**: The snippet is conceptual. In a real system, you may need a small in-memory data structure to track each `sessionId`, `frameId`, etc. This is indicated with inline comments.
+3. We store state in maps so that each `sessionId` and `frameId` is handled consistently.
 
 ```js
 export default {
   name: "RuntimeEnableMitMPlugin",
 
-  // This map tracks if a session thinks "Runtime is enabled" so we can
+  // Tracks if a session thinks "Runtime is enabled" so we can
   // give them synthetic contexts and skip real calls.
   sessionsRuntimeEnabled: new Map(), // key=CDP sessionId, value=boolean
 
-  // Also track known frames and their assigned contextIds:
+  // Track known frames and their assigned contextIds:
   frameContexts: new Map(), // key=frameId, value=executionContextId
 
   async onRequest(request) {
@@ -79,46 +77,41 @@ export default {
       // Mark that the session wants the runtime domain
       this.sessionsRuntimeEnabled.set(request.sessionId, true);
 
-      // Return a fake success response right away
-      // We'll skip sending to the real browser:
+      // Return a fake success response right away.
+      // We'll NOT forward this to the real browser.
       const mockResponse = {
         id: request.id,
-        result: {} // nothing special needed
+        result: {}
       };
-      // Tell the proxy to short-circuit this request and respond immediately:
+      // Short-circuit: send mock response, skip real request.
       await this.fakeResponseToClient(request.sessionId, mockResponse);
-      return null; // or any special signal to "drop" the real request
+      return null; // signal to drop this request
     }
 
-    // We also watch "Runtime.runIfWaitingForDebugger",
-    // "Runtime.addBinding", or "Page.createIsolatedWorld" if we want
-    // to rewrite them. But typically we let them pass.
-
+    // Let other calls pass through
     return request;
   },
 
   async onResponse(response) {
-    // Typically we do not need to do much in onResponse for this scenario.
-    // However, we might intercept "Runtime.enable" responses if we let them through accidentally.
+    // Typically do not manipulate responses here for this patch approach.
     return response;
   },
 
   async onEvent(event) {
-    // event = parsed JSON object: { method, params, sessionId }
+    // event = parsed JSON object: {method, params, sessionId}
     if (!event || !event.method) return event;
 
     // 2. Observe new frames or workers
-    if (event.method === "Page.frameAttached" || 
+    if (event.method === "Page.frameAttached" ||
         event.method === "Page.frameNavigated") {
-      // We'll create an isolated context for that frame behind the scenes, 
-      // but only if the session thinks they "enabled" the runtime domain.
       const sessionId = event.sessionId;
       if (!this.sessionsRuntimeEnabled.get(sessionId)) {
+        // If the user never tried to enable runtime, do nothing special.
         return event;
       }
 
-      // Extract or generate the frameId
-      const frameId = event.params.frame ? event.params.frame.id : event.params.frameId;
+      // Extract or generate frameId
+      const frameId = event.params.frame?.id || event.params.frameId;
       if (!frameId) return event;
 
       // If we haven't created a context yet for this frame, do it now
@@ -127,15 +120,15 @@ export default {
         // store the mapping
         this.frameContexts.set(frameId, contextId);
 
-        // 3. Emit the synthetic Runtime.executionContextCreated event so that
-        // Playwright believes a normal main-world context has arrived:
+        // 3. Emit a synthetic Runtime.executionContextCreated event
+        // so Playwright believes that a normal main-world context was created:
         const fakeContextCreated = {
           method: "Runtime.executionContextCreated",
           params: {
             context: {
               id: contextId,
-              origin: "", // or "://"
-              name: "",   // main world is typically empty
+              origin: "",
+              name: "",
               auxData: {
                 frameId,
                 isDefault: true
@@ -156,11 +149,9 @@ export default {
    * Page.createIsolatedWorld and returns the executionContextId.
    */
   async createIsolatedContext(sessionId, frameId) {
-    // We call a custom method on the real DevTools that the plugin
-    // is allowed to invoke:
     const result = await this.sendCDPCommand(
       sessionId,
-      /* custom messageId or let it auto-generate */ undefined,
+      undefined, // or a custom messageId
       {
         method: "Page.createIsolatedWorld",
         params: {
@@ -174,51 +165,51 @@ export default {
   },
 
   /**
-   * Utility: send a synthetic response to the client for a request we do not
-   * want to forward to the actual browser.
+   * Send a synthetic response to the client for a request
+   * we do not want to forward to the actual browser.
    */
   async fakeResponseToClient(sessionId, responseBody) {
     // Implementation depends on the actual proxy architecture.
-    // A typical approach: place it onto the "response pipeline" or
-    // directly call an API that queues a mock response for the given ID.
+    // Typically, you'd add it to the "response pipeline" or
+    // call an API to queue a mock response for that session.
   },
 
   /**
-   * Utility: deliver a "fake event" from the browser to the client.
+   * Deliver a "fake event" from the browser to the client.
    */
   async sendEventToClient(eventBody) {
-    // Implementation also depends on the proxy. Typically you'd place
-    // this message onto the event stream for that session.
+    // Implementation depends on the proxy as well; you'd typically
+    // place this message onto the event stream for that session.
   }
 };
 ```
 
 ### Explanation of Key Points
-- **`onRequest(request)`**:  
+- **`onRequest(request)`**  
   - Checks if `method === "Runtime.enable"`.  
-  - Drops that request (does NOT forward it to the real devtools) and sends back a fake success so the Playwright caller sees no error.  
-- **`onEvent(event)`**:  
-  - Whenever a new frame or navigation is reported, we create an isolated world for that frame behind the scenes.  
-  - We store the returned `executionContextId` in `frameContexts`, then **emit** a `Runtime.executionContextCreated` event to the client. Playwright sees it and thinks the runtime domain is working normally.  
-- **`createIsolatedContext(sessionId, frameId)`**:
-  - Actually calls `Page.createIsolatedWorld` on the real browser. This is precisely how the original patch obtains a frame’s “main” or “utility” context ID, except we’re doing it from the plugin.  
+  - Drops that request (does NOT forward it to the real devtools) and sends back a fake success, so Playwright sees no error.  
 
-This approach **mimics** the structure from the patch files but through an external plugin.
+- **`onEvent(event)`**  
+  - Whenever a new frame or navigation is reported, we create an isolated world for that frame behind the scenes (calling `Page.createIsolatedWorld`).  
+  - We store the returned `executionContextId` in a map, then **emit** a `Runtime.executionContextCreated` event to the client.  
+
+- **Worker/Service Worker Support**  
+  - Similar logic applies to any events like `Target.attachedToTarget` for workers. The plugin must do the same: create an isolated world or binding if a new worker is discovered, then emit `Runtime.executionContextCreated`.
 
 ---
 
 ## 6. Additional Considerations
 
 1. **Workers and Service Workers**  
-   You can apply the same approach: watch for `Target.attachedToTarget` or worker-related events. If `Runtime.enable` is never truly enabled, you must forcibly create the worker’s context using the same `Page.createIsolatedWorld` or other relevant commands (like `Runtime.addBinding` if the worker doesn’t support `createIsolatedWorld`). Then emit synthetic `executionContextCreated`.
+   You can apply the same approach: watch for `Target.attachedToTarget` or worker-related events. If `Runtime.enable` is never truly sent, you must forcibly create the worker’s context via `Page.createIsolatedWorld` or `Runtime.addBinding`. Then emit the same `Runtime.executionContextCreated` event.
 
 2. **Console / Exception Handling**  
-   Since we never truly enable the runtime domain, console logs and exceptions may not naturally flow in. If your automation code depends on capturing console output or error stack traces, you can:
-   - Either occasionally enable the domain in ephemeral “hidden” sessions,
-   - Or intercept `consoleAPICalled` events from ephemeral devtools sessions (beyond the scope of this RFC).
+   Because we’re never really enabling the runtime domain, `consoleAPICalled` and `exceptionThrown` events will not stream in automatically. If your automation code needs logs or stack traces, you can:
+   - Briefly enable the domain in an ephemeral or hidden session,
+   - Or intercept logs from that hidden session and forward them to the client.
 
-3. **Event Timestamps**  
-   If advanced anti-bot scripts measure timestamps or missing `Runtime.consoleAPICalled`, you may need to inject partial console data manually to look more realistic. The best approach is case-dependent.
+3. **Fingerprinting**  
+   With the runtime domain not truly enabled, some advanced detection scripts might notice no DevTools domain activity. However, for the standard “`Runtime.enable` watchers,” you have neutralized that detection vector.
 
 ---
 
@@ -227,4 +218,4 @@ By using a **MitM plugin** that **filters `Runtime.enable`** calls, **emits synt
 
 - **Transparent** to the Playwright code (no local patches needed).  
 - **Flexible** as new versions of Playwright come out (the plugin can remain stable with minimal adjustments).  
-- **Detectable** only with deeper heuristics, but for standard “`Runtime.enable` watchers,” the detection vector is removed.
+- **Less Detectable** than standard `Runtime.enable` usage, removing one of the key signals that advanced anti-bot scripts rely on.

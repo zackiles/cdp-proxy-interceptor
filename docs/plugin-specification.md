@@ -1,4 +1,4 @@
-### **Plugin Interface Specification & Capabilities (Enhanced)**
+### **Plugin Interface Specification & Capabilities **
 
 ## **1. Lifecycle Hooks**
 
