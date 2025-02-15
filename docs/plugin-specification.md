@@ -2,18 +2,28 @@
 
 ## **1. Lifecycle Hooks**
 
-Each plugin must export an **object** with three **key** lifecycle interceptors, each returning promises:
+Each plugin must export an **object** implementing the `CDPPlugin` interface with these optional lifecycle interceptors:
 
-```js
+```typescript
+interface CDPPlugin {
+  name: string;
+  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
+  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
+  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
+  sendCDPCommand?(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>;
+  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
+}
+
+// Example implementation:
 export default {
   name: "MyMitmPlugin",
 
-  async onRequest(request) { /*...*/ },
+  async onRequest(request: CDPCommandRequest) { /*...*/ },
 
-  async onResponse(response) { /*...*/ },
+  async onResponse(response: CDPCommandResponse) { /*...*/ },
 
-  async onEvent(event) { /*...*/ }
-}
+  async onEvent(event: CDPEvent) { /*...*/ }
+} as CDPPlugin;
 ```
 
 ### **1.1 `onRequest(request)`**
@@ -94,12 +104,16 @@ async onEvent(event) {
 
 ## **2. CDP Command Proxying**
 
-### **2.1 The `this.sendCDPCommand(endpoint, proxySessionId, message)` Method
+### **2.1 The `sendCDPCommand?(endpoint, proxySessionId, message)` Method**
 
-Your plugin has the ability to programmatically send additional CDP commands to the browser:
+Your plugin can optionally implement the ability to programmatically send additional CDP commands to the browser:
 
-```js
-await this.sendCDPCommand(endpoint, proxySessionId, message);
+```typescript
+async sendCDPCommand?(
+  endpoint: string,
+  proxySessionId: string, 
+  message: CDPCommandRequest
+): Promise<CDPCommandResponse>;
 ```
 
 Where:
@@ -108,7 +122,7 @@ Where:
   - `"/devtools/page/{targetId}"`  
   - `"/json/close/{targetId}"`  
   - `"/json/new?{url}"`  
-- **`proxySessionId`**: A **unique** internal ID that the plugin uses to keep track of this conversation. This is **not** Chrome’s actual `sessionId`.  
+- **`proxySessionId`**: A **unique** internal ID that the plugin uses to keep track of this conversation. This is **not** Chrome's actual `sessionId`.  
 - **`message`**: An object describing the CDP command, e.g.:
   ```js
   {
@@ -127,7 +141,13 @@ Where:
 
 ## **3. Emitting (Synthetic) Events to the Client**
 
-### **3.1 The `this.emitClientEvent(proxySessionId, event)` Method
+### **3.1 The `emitClientEvent?(proxySessionId, event)` Method**
+
+Your plugin can optionally implement the ability to emit events back to the client:
+
+```typescript
+async emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
+```
 
 Anytime you want to **fake** or **inject** an event back to Playwright, call:
 
@@ -139,8 +159,8 @@ Where:
 
 - **`proxySessionId`**: The same local ID used to correlate events to the correct client session.
 - **`event`**: A JSON object representing a **CDP response** or **CDP event**. Typically includes:
-  - A `"method"` (e.g., `"Runtime.executionContextCreated"`) if it’s an event.
-  - An `"id"` field if it’s a response to a prior request.
+  - A `"method"` (e.g., `"Runtime.executionContextCreated"`) if it's an event.
+  - An `"id"` field if it's a response to a prior request.
   - `"params"` that hold any relevant data (e.g., an object describing the new execution context).
 
 #### **Example Usage**
@@ -174,7 +194,7 @@ Notably, in this specification:
   "sessionId": "AB3AC73A42915BAE2766B1EF2F1957DD"
 }
 ```
-*(`sessionId` is unique from the proxy’s perspective, not the real devtools sessionId.)*
+*(`sessionId` is unique from the proxy's perspective, not the real devtools sessionId.)*
 
 ### **4.2 Example CDP Response**
 ```json
@@ -208,7 +228,7 @@ Notably, in this specification:
 - Insert **synthetic** responses that fool the client into thinking everything is normal.
 
 **B. Automation Enhancements**  
-- Inject or manipulate frames, service workers, or ephemeral devtools sessions, effectively **extending** Playwright’s capability **without** modifying its source.
+- Inject or manipulate frames, service workers, or ephemeral devtools sessions, effectively **extending** Playwright's capability **without** modifying its source.
 
 **C. Debugging & Monitoring**  
 - Log or trace all CDP activity, e.g., saving every request and event to a database for debugging or replay.

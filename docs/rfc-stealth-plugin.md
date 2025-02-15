@@ -1,15 +1,15 @@
-# RFC: Runtime.enable MitM Plugin for Transparent CDP Patching
+# RFC: Runtime.enable Plugin for CDP Proxy Interceptor
 
 ## 1. Overview
-This **Request For Comments (RFC)** outlines how to transparently replicate the outcome of the `lib.patch.txt` and `src.patch.txt` patches—namely **preventing detection of `Runtime.enable`**—using **only** a Man-in-the-Middle (MitM) plugin that intercepts and manipulates Chrome DevTools Protocol (CDP) traffic between Playwright and the actual browser.
+This **Request For Comments (RFC)** outlines how to transparently replicate the outcome of the `lib.patch.txt` and `src.patch.txt` patches—namely **preventing detection of `Runtime.enable`**—using a plugin for the CDP Proxy Interceptor that intercepts and manipulates Chrome DevTools Protocol (CDP) traffic between Playwright and the actual browser.
 
-By design, **Playwright** natively calls `Runtime.enable` for each new page and worker context. Anti-bot scripts often detect that call. The patches in `lib.patch.txt` and `src.patch.txt` remove or defer `Runtime.enable` within Playwright’s internals so that websites do not detect the DevTools Runtime domain activation. However, modifying the library is cumbersome to maintain, and can break new versions of Playwright. Instead, we will:
+By design, **Playwright** natively calls `Runtime.enable` for each new page and worker context. Anti-bot scripts often detect that call. The patches in `lib.patch.txt` and `src.patch.txt` remove or defer `Runtime.enable` within Playwright's internals so that websites do not detect the DevTools Runtime domain activation. However, modifying the library is cumbersome to maintain, and can break new versions of Playwright. Instead, we will:
 
-1. **Intercept** the client’s `Runtime.enable` requests at the CDP level.
+1. **Intercept** the client's `Runtime.enable` requests at the CDP level using the CDP Proxy Interceptor.
 2. **Fake** the success responses so Playwright thinks `Runtime.enable` was called.
 3. **Manually** create new execution contexts and send the same `Runtime.executionContextCreated` events that Playwright expects—without ever actually enabling the Runtime domain on the real browser endpoint.
 
-Everything happens via a **MitM proxy plugin** that rewrites requests/responses and optionally injects messages on the wire. **No patches or changes to Playwright itself** are needed.
+Everything happens via a **CDP plugin** that leverages the CDP Proxy Interceptor's plugin system to rewrite requests/responses and inject messages on the wire. **No patches or changes to Playwright itself** are needed.
 
 ---
 
@@ -26,9 +26,9 @@ Everything happens via a **MitM proxy plugin** that rewrites requests/responses 
 ## 3. Mapping to the Original Patches
 The original patches remove calls to `Runtime.enable` or gate them behind environment variables, then replace them with manual context creation logic. Our plugin approach replicates that logic in the middle:
 
-1. **Intercept** `Runtime.enable` → **drop** the request, store in memory that the user “wants” it enabled, and send a success response.
+1. **Intercept** `Runtime.enable` → **drop** the request, store in memory that the user "wants" it enabled, and send a success response.
 2. **Track** frames or workers → whenever we see `Page.frameAttached`, `Page.frameNavigated`, `Target.attachedToTarget`, or worker creation, we proactively create contexts for them (via `Page.createIsolatedWorld`, `Runtime.addBinding`, etc.).
-3. **Emit** “`Runtime.executionContextCreated`” events to the client so it thinks the runtime domain is active.
+3. **Emit** "`Runtime.executionContextCreated`" events to the client so it thinks the runtime domain is active.
 
 This is effectively the same outcome as the patches, but done externally in the proxy layer.
 
@@ -37,25 +37,27 @@ This is effectively the same outcome as the patches, but done externally in the 
 ## 4. Exact Modifications Recap
 From prior research (and the patch details), to hide `Runtime.enable`:
 
-- **Skip** the real `Runtime.enable` call to the browser. The site’s detection scripts never see any unusual extra DevTools runtime domain overhead.
+- **Skip** the real `Runtime.enable` call to the browser. The site's detection scripts never see any unusual extra DevTools runtime domain overhead.
 - **Fake** the success response and relevant events that `Runtime.enable` would normally produce.  
 - **Handle new frames or workers** by manually forging new contexts. Otherwise, Playwright breaks if it never sees `Runtime.executionContextCreated` for each frame.
 
 ---
 
 ## 5. Example Implementation
-Below is a fully working **plugin** that you would drop into a MITM proxy. It has three hooks:
+Below is a fully working **plugin** that implements the CDP Proxy Interceptor's `CDPPlugin` interface with all necessary methods:
 
-- `onRequest(request)`  
-- `onResponse(response)`  
-- `onEvent(event)`
+```typescript
+interface CDPPlugin {
+  name: string;
+  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
+  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
+  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
+  sendCDPCommand?(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>;
+  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
+}
+```
 
-We also use an internal helper to call the real DevTools (`this.sendCDPCommand`) whenever we need to do so behind the scenes.
-
-**Key Points**  
-1. We watch for `Runtime.enable` requests. We skip sending them on, but instantly return a “success” `{"id":..., "result":{}}` so the client remains unaware.  
-2. We watch for new frames, workers, and any other triggers that normally cause an `executionContextId` to appear. We create an isolated world or binding on the real browser, capture the ID, and emit the synthetic `Runtime.executionContextCreated`.  
-3. We store state in maps so that each `sessionId` and `frameId` is handled consistently.
+The plugin implementation follows:
 
 ```js
 export default {
@@ -84,7 +86,7 @@ export default {
         result: {}
       };
       // Short-circuit: send mock response, skip real request.
-      await this.fakeResponseToClient(request.sessionId, mockResponse);
+      await this.emitClientEvent(request.sessionId, mockResponse);
       return null; // signal to drop this request
     }
 
@@ -137,7 +139,7 @@ export default {
           },
           sessionId
         };
-        await this.sendEventToClient(fakeContextCreated);
+        await this.emitClientEvent(sessionId, fakeContextCreated);
       }
     }
 
@@ -150,8 +152,8 @@ export default {
    */
   async createIsolatedContext(sessionId, frameId) {
     const result = await this.sendCDPCommand(
+      "/devtools/page/" + frameId,
       sessionId,
-      undefined, // or a custom messageId
       {
         method: "Page.createIsolatedWorld",
         params: {
@@ -168,21 +170,17 @@ export default {
    * Send a synthetic response to the client for a request
    * we do not want to forward to the actual browser.
    */
-  async fakeResponseToClient(sessionId, responseBody) {
-    // Implementation depends on the actual proxy architecture.
-    // Typically, you'd add it to the "response pipeline" or
-    // call an API to queue a mock response for that session.
-  },
-
-  /**
-   * Deliver a "fake event" from the browser to the client.
-   */
-  async sendEventToClient(eventBody) {
-    // Implementation depends on the proxy as well; you'd typically
-    // place this message onto the event stream for that session.
+  async emitClientEvent(sessionId, responseBody) {
+    // The CDP Proxy Interceptor will handle routing this event to the correct client session
+    // through its WebSocket manager and session tracking system
   }
-};
+} as CDPPlugin;
 ```
+
+**Key Points**  
+1. We watch for `Runtime.enable` requests. We skip sending them on, but instantly return a "success" `{"id":..., "result":{}}` so the client remains unaware.  
+2. We watch for new frames, workers, and any other triggers that normally cause an `executionContextId` to appear. We create an isolated world or binding on the real browser, capture the ID, and emit the synthetic `Runtime.executionContextCreated` through the CDP Proxy Interceptor's event system.  
+3. We store state in maps so that each `sessionId` and `frameId` is handled consistently within our plugin's lifecycle.
 
 ### Explanation of Key Points
 - **`onRequest(request)`**  
@@ -201,21 +199,22 @@ export default {
 ## 6. Additional Considerations
 
 1. **Workers and Service Workers**  
-   You can apply the same approach: watch for `Target.attachedToTarget` or worker-related events. If `Runtime.enable` is never truly sent, you must forcibly create the worker’s context via `Page.createIsolatedWorld` or `Runtime.addBinding`. Then emit the same `Runtime.executionContextCreated` event.
+   You can apply the same approach: watch for `Target.attachedToTarget` or worker-related events. If `Runtime.enable` is never truly sent, you must forcibly create the worker's context via `Page.createIsolatedWorld` or `Runtime.addBinding`. Then emit the same `Runtime.executionContextCreated` event.
 
 2. **Console / Exception Handling**  
-   Because we’re never really enabling the runtime domain, `consoleAPICalled` and `exceptionThrown` events will not stream in automatically. If your automation code needs logs or stack traces, you can:
+   Because we're never really enabling the runtime domain, `consoleAPICalled` and `exceptionThrown` events will not stream in automatically. If your automation code needs logs or stack traces, you can:
    - Briefly enable the domain in an ephemeral or hidden session,
    - Or intercept logs from that hidden session and forward them to the client.
 
 3. **Fingerprinting**  
-   With the runtime domain not truly enabled, some advanced detection scripts might notice no DevTools domain activity. However, for the standard “`Runtime.enable` watchers,” you have neutralized that detection vector.
+   With the runtime domain not truly enabled, some advanced detection scripts might notice no DevTools domain activity. However, for the standard "`Runtime.enable` watchers," you have neutralized that detection vector.
 
 ---
 
 ## 7. Conclusion
-By using a **MitM plugin** that **filters `Runtime.enable`** calls, **emits synthetic contexts**, and **creates isolated worlds** in the real browser behind the scenes, we reproduce the main effect of the original patches: **no permanent `Runtime.enable`** usage is visible, yet **Playwright** remains fully functional. This design is:
+By using a **CDP plugin** that **filters `Runtime.enable`** calls, **emits synthetic contexts**, and **creates isolated worlds** in the real browser behind the scenes through the CDP Proxy Interceptor's plugin system, we reproduce the main effect of the original patches: **no permanent `Runtime.enable`** usage is visible, yet **Playwright** remains fully functional. This design is:
 
 - **Transparent** to the Playwright code (no local patches needed).  
 - **Flexible** as new versions of Playwright come out (the plugin can remain stable with minimal adjustments).  
 - **Less Detectable** than standard `Runtime.enable` usage, removing one of the key signals that advanced anti-bot scripts rely on.
+- **Maintainable** as it leverages the CDP Proxy Interceptor's well-defined plugin interface and infrastructure.
