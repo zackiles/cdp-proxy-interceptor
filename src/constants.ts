@@ -56,6 +56,23 @@ export const CHROMIUM_DATA_STORAGE_URL =
 
 export const CDP_WEBSOCKET_PATHS = ['/devtools/browser', '/devtools/page', '/devtools/inspector'] as const
 
+export const CHROME_FLAGS = [
+  '--headless=new',
+  '--disable-gpu',
+  '--disable-accelerated-video-decode',
+  '--no-sandbox',
+  '--enable-logging',
+  '--v=1',
+  '--enable-features=NetworkService,NetworkServiceInProcess',
+  '--allow-pre-commit-input',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-extensions',
+  '--disable-sync',
+  '--enable-automation',
+  '--password-store=basic'
+] as const
+
 export const WEBSOCKET_MANAGER = {
   MAX_PENDING_MESSAGES: 1000,
   HEARTBEAT_INTERVAL: 30000,

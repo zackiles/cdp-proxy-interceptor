@@ -1,28 +1,11 @@
 import { launch, type LaunchedChrome } from 'npm:chrome-launcher'
 import { getAvailablePort} from 'jsr:@std/net'
-import { doesProcessWithPortExist } from './utils.ts'
-import { CDPErrorType } from './types.ts'
+import { doesProcessWithPortExist, getChromiumPaths, getBrowserNameFromPath } from './utils.ts'
+import { CDPErrorType, type ChromiumPaths } from './types.ts'
 import { ErrorHandler } from './error_handler.ts'
-import { getChromiumPaths } from './utils.ts'
+import { CHROME_FLAGS } from './constants.ts'
 
-const BROWSER_NAME = 'Chromium'
-const DEFAULT_RETRY_CONFIG = { retries: 3, baseDelay: 100 }
-const CHROME_FLAGS = [
-  '--headless=new',
-  '--disable-gpu',
-  '--disable-accelerated-video-decode',
-  '--no-sandbox',
-  '--enable-logging',
-  '--v=1',
-  '--enable-features=NetworkService,NetworkServiceInProcess',
-  '--allow-pre-commit-input',
-  '--disable-background-networking',
-  '--disable-default-apps',
-  '--disable-extensions',
-  '--disable-sync',
-  '--enable-automation',
-  '--password-store=basic'
-]
+const DEFAULT_RETRY_CONFIG = { retries: 3, baseDelay: 500 }
 
 interface ExtendedChrome extends LaunchedChrome {
   destroyTmp?: () => Promise<void>
@@ -44,9 +27,13 @@ export class ChromeManager {
   private isStarting = false
   isKilling = false
   private readonly errorHandler: ErrorHandler
+  private readonly chromiumPaths: ChromiumPaths
+  private readonly browserName: string
 
   constructor(errorHandler: ErrorHandler) {
     this.errorHandler = errorHandler
+    this.chromiumPaths = getChromiumPaths()
+    this.browserName = getBrowserNameFromPath(this.chromiumPaths.executablePath)
   }
   
   /**
@@ -56,7 +43,7 @@ export class ChromeManager {
    * @returns WebSocket URL for Chrome DevTools Protocol
    */
   async start(retries = DEFAULT_RETRY_CONFIG.retries, baseDelay = DEFAULT_RETRY_CONFIG.baseDelay): Promise<string> {
-    if (this.isStarting) throw new Error(`${BROWSER_NAME} is already starting`)
+    if (this.isStarting) throw new Error(`${this.browserName} is already starting`)
     this.isStarting = true
 
     try {
@@ -65,9 +52,8 @@ export class ChromeManager {
           this.port = await getAvailablePort()
           await this.killExistingChromeOnPort()
           
-          const { executablePath } = getChromiumPaths()
           this.chrome = await launch({
-            chromePath: executablePath,
+            chromePath: this.chromiumPaths.executablePath,
             port: this.port,
             chromeFlags: [...CHROME_FLAGS, `--remote-debugging-port=${this.port}`],
             handleSIGINT: true
@@ -75,17 +61,17 @@ export class ChromeManager {
 
           if (!this.chrome?.pid) {
             await this.forceCleanup()
-            throw new Error(`Failed to start ${BROWSER_NAME}!`) 
+            throw new Error(`Failed to start ${this.browserName}!`) 
           }
 
           if (!await doesProcessWithPortExist(this.port)) {
             await this.forceCleanup()
-            throw new Error(`Failed to find a process for ${BROWSER_NAME} with an open port of ${this.port}!`)
+            throw new Error(`Failed to find a process for ${this.browserName} with an open port of ${this.port}!`)
           }
 
           await this.waitForDebuggerEndpoint(this.port, baseDelay * 2 ** i)
           this.wsUrl = await this.getWebSocketUrl()
-          console.log(`${BROWSER_NAME} started with PID: ${this.chrome.pid} on port ${this.port}`)
+          console.log(`${this.browserName} started with PID: ${this.chrome.pid} on port ${this.port}`)
           return this.wsUrl
         } catch (e) {
           await this.forceCleanup()
@@ -93,7 +79,7 @@ export class ChromeManager {
           await new Promise(r => setTimeout(r, baseDelay * 2 ** i))
         }
       }
-      throw new Error(`Failed to start ${BROWSER_NAME} after ${retries} retries`)
+      throw new Error(`Failed to start ${this.browserName} after ${retries} retries`)
     } finally {
       this.isStarting = false
     }
@@ -106,19 +92,36 @@ export class ChromeManager {
    * @returns True if response is valid
    */
   private isValidDebuggerResponse(data: unknown, port: number): boolean {
-    const requiredFields = [
+    if (typeof data !== 'object' || data === null) {
+      console.debug('Invalid debugger response: not an object', data)
+      return false
+    }
+
+    const response = data as Record<string, unknown>
+    if (typeof response.webSocketDebuggerUrl !== 'string') {
+      console.debug('Invalid debugger response: missing or invalid webSocketDebuggerUrl', response)
+      return false
+    }
+
+    const wsUrl = response.webSocketDebuggerUrl as string
+    if (!wsUrl.includes(`localhost:${port}/devtools/browser/`)) {
+      console.debug('Invalid debugger response: incorrect WebSocket URL format', wsUrl)
+      return false
+    }
+
+    // Optional fields validation
+    const optionalFields = [
       'Browser', 'Protocol-Version', 'User-Agent', 
       'V8-Version', 'WebKit-Version'
     ]
-    
-    return typeof data === 'object' && 
-      data !== null &&
-      requiredFields.every(field => 
-        typeof (data as Record<string, unknown>)[field] === 'string'
-      ) &&
-      typeof (data as Record<string, unknown>).webSocketDebuggerUrl === 'string' &&
-      (data as Record<string, string>).webSocketDebuggerUrl
-        .startsWith(`ws://localhost:${port}/devtools/browser/`)
+    const missingFields = optionalFields.filter(field => 
+      typeof response[field] !== 'string'
+    )
+    if (missingFields.length > 0) {
+      console.debug('Warning: debugger response missing optional fields:', missingFields)
+    }
+
+    return true
   }
 
   /**
@@ -153,7 +156,7 @@ export class ChromeManager {
       })
 
       try {
-        connection.close(1000, `${BROWSER_NAME} stopping`)
+        connection.close(1000, `${this.browserName} stopping`)
       } catch (error) {
         console.warn('Error closing connection:', error)
         clearTimeout(timeout)
@@ -168,7 +171,7 @@ export class ChromeManager {
     const exists = await this.checkExistingChrome()
     if (!exists) return
     
-    console.log(`Found existing ${BROWSER_NAME} instance, killing it...`)
+    console.log(`Found existing ${this.browserName} instance, killing it...`)
     await this.killProcessByPort()
     await new Promise(r => setTimeout(r, 1000))
   }
@@ -217,7 +220,7 @@ export class ChromeManager {
   private async closeAllConnections(): Promise<void> {
     for (const connection of this.connections) {
       try {
-        connection.close(1000, `${BROWSER_NAME} stopping`)
+        connection.close(1000, `${this.browserName} stopping`)
       } catch (error) {
         console.warn('Error closing connection:', error)
       }
@@ -260,27 +263,35 @@ export class ChromeManager {
 
   private async waitForDebuggerEndpoint(port: number, timeout: number): Promise<void> {
     const start = Date.now()
-    const minTimeout = 1000
+    const minTimeout = 5000 // Increased minimum timeout to 5 seconds
     const actualTimeout = Math.max(timeout, minTimeout)
+    const retryInterval = 500 // Increased retry interval to 500ms
 
     while (Date.now() - start < actualTimeout) {
       try {
+        console.debug(`Attempting to connect to debugger endpoint at http://localhost:${port}/json/version`)
         const response = await fetch(`http://localhost:${port}/json/version`)
+        
         if (!response.ok) {
-          await new Promise(r => setTimeout(r, 100))
+          console.debug(`Debugger endpoint returned status ${response.status}`)
+          await new Promise(r => setTimeout(r, retryInterval))
           continue
         }
 
         const data = await response.json()
-        if (this.isValidDebuggerResponse(data, port)) return
+        if (this.isValidDebuggerResponse(data, port)) {
+          console.debug('Successfully connected to debugger endpoint')
+          return
+        }
         
-        console.warn('CDP endpoint response missing required fields:', data)
+        console.warn('CDP endpoint response validation failed:', data)
+        await new Promise(r => setTimeout(r, retryInterval))
       } catch (error) {
-        console.debug('Waiting for CDP endpoint...', error)
-        await new Promise(r => setTimeout(r, 100))
+        console.debug('Error connecting to CDP endpoint:', error)
+        await new Promise(r => setTimeout(r, retryInterval))
       }
     }
-    throw new Error(`Debugger endpoint not ready after ${actualTimeout}ms`)
+    throw new Error(`Debugger endpoint not ready after ${actualTimeout}ms. Please check if ${this.browserName} is running and accessible.`)
   }
 
   /**
@@ -289,7 +300,7 @@ export class ChromeManager {
    * @returns Promise resolving to the WebSocket URL
    */
   async getWebSocketUrl(): Promise<string> {
-    if (!this.port) throw new Error(`${BROWSER_NAME} not started`)
+    if (!this.port) throw new Error(`${this.browserName} not started`)
     const response = await fetch(`http://localhost:${this.port}/json/version`)
     const { webSocketDebuggerUrl } = await response.json()
     return webSocketDebuggerUrl
@@ -353,7 +364,7 @@ export class ChromeManager {
           this.errorHandler.handleError({
             type: CDPErrorType.RESOURCE,
             code: 5001,
-            message: `Failed to kill ${BROWSER_NAME} after ${retries} attempts`,
+            message: `Failed to kill ${this.browserName} after ${retries} attempts`,
             recoverable: false,
             details: { error, attempts: retries }
           })

@@ -5,9 +5,6 @@ export class LoggingPlugin implements CDPPlugin {
 
   async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
     console.log('[CDP Plugin] Intercepted request:', request)
-    if(request.method === 'Browser.getVersion') {
-      return null
-    }
     return request
   }
 

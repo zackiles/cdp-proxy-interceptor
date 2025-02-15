@@ -43,6 +43,17 @@ export function getChromiumPaths(): ChromiumPaths {
   }
 }
 
+/**
+ * Determines the browser name based on the executable path
+ * @param executablePath Path to the browser executable
+ * @returns The detected browser name or a generic CDP Browser name
+ */
+export function getBrowserNameFromPath(executablePath: string): string {
+  const lowercasePath = executablePath.toLowerCase()
+  if (lowercasePath.includes('chromium')) return 'Chromium'
+  if (lowercasePath.includes('chrome')) return 'Chrome'
+  return 'CDP Browser' // fallback for other CDP-compatible browsers
+}
 
 export async function doesProcessWithPortExist(port: number): Promise<boolean> {
   try {
