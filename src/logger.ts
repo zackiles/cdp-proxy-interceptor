@@ -161,7 +161,7 @@ export class Logger {
 
     if (Object.keys(restData).length) {
       logMessage += `\n${Deno.inspect(restData, {
-        depth: 4,
+        depth: level === 'verbose' ? 4 : 1,
         colors: true,
         compact: false,
         sorted: true,
