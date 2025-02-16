@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `cdp-proxy-interceptor` is a transparent man-in-the-middle (MITM) proxy for the Chrome DevTools Protocol (CDP). Intercept, modify, inject, and filter messages between a CDP-enabled browser and any clients interacting with it such as Playwright or Puppeteer.
+The `cdp-proxy-interceptor` is a transparent man-in-the-middle (MITM) proxy for the Chrome DevTools Protocol (CDP). Intercept, modify, inject, and filter messages and events between a CDP-enabled browser and any clients interacting with it such as Playwright or Puppeteer.
 
 The core strength of this proxy lies in its [flexible plugin system](docs/plugin-specification.md), which allows users to write anything from basic intercepts, to advanced plugins that can extend and enhance the capabilities of their CDP client. Some examples of what you could do with a plugin:
 
