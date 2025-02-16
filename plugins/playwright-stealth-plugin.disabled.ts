@@ -254,7 +254,7 @@ export class RuntimeEnableMitMPlugin extends BaseCDPPlugin {
   /**
    * Cleanup method to be called when the plugin is being disposed
    */
-  override cleanup(): void {
+  override async cleanup(): Promise<void> {
     this.sessionsRuntimeEnabled.clear()
     this.frameContexts.clear()
     this.workerContexts.clear()

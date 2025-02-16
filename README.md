@@ -195,36 +195,9 @@ The proxy automatically handles SIGTERM and SIGINT signals, performing a gracefu
 2. Closes all WebSocket connections
 3. Shuts down the HTTP server
 
-## Development
+## Contributing
 
-### Project Structure
-
-```
-cdp-proxy-interceptor/
-├── src/                # Source code
-│   ├── chrome_manager.ts   # Chrome process management
-│   ├── http_manager.ts     # HTTP request handling
-│   ├── plugin_manager.ts   # Plugin system
-│   ├── session_manager.ts  # WebSocket session tracking
-│   └── ws_manager.ts       # WebSocket handling
-├── test/              # Test files
-├── plugins/           # Plugin directory
-└── scripts/          # Utility scripts
-```
-
-### Running Tests
-
-```bash
-deno run tests
-```
-
-### Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat(logging): improved logging'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+For information about contributing to the project, including development setup, using the logger, and the contribution process, please see [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## License
 
