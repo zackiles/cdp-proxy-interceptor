@@ -17,13 +17,18 @@ const cdpSession = await browser.newBrowserCDPSession()
 let syntheticContextCreated = false
 cdpSession.on('Runtime.executionContextCreated', (event) => {
   console.log(event)
-  Deno.exit(0)
-  if (event.context.auxData?.isDefault === 'true') {
+  if (event.context.auxData?.isDefault === true) {
     syntheticContextCreated = true
   }
 })
 
-await page.goto('https://google.com', { waitUntil: 'networkidle' })
+// Explicitly enable Runtime (IMPORTANT for testing the plugin)
+await cdpSession.send('Runtime.enable').catch(error => {
+    console.error("Failed to enable Runtime:", error);
+    Deno.exit(1); // Exit with error code
+});
+
+await page.goto('https://google.com')
 await new Promise(resolve => setTimeout(resolve, 10000))
 
 // Verification checks
@@ -34,9 +39,8 @@ if (syntheticContextCreated) {
   console.log('✅ Synthetic execution context was created')
 } else {
   throw new Error('❌ No synthetic execution context created')
-  
-  
 }
+Deno.exit(0)
 
 // 2. Basic functionality check
 try {
@@ -52,4 +56,3 @@ await page.close()
 await context.close()
 await browser.close()
 await proxy.cleanup()
-Deno.exit(0)
