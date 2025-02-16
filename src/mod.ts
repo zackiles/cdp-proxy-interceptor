@@ -4,7 +4,7 @@ export type {
   CDPCommandRequest,
   CDPCommandResponse,
   CDPEvent,
-  Session
+  Session,
 } from './types.ts'
 
 // Export main functionality for starting/stopping proxy

@@ -13,7 +13,9 @@ export function getChromiumPaths(): ChromiumPaths {
   // If executable path is provided, use it directly
   if (executablePath) {
     if (directory || staticVersion) {
-      throw new Error('When CHROMIUM_EXECUTABLE_PATH is set, CHROMIUM_DIRECTORY and CHROMIUM_STATIC_VERSION must not be set')
+      throw new Error(
+        'When CHROMIUM_EXECUTABLE_PATH is set, CHROMIUM_DIRECTORY and CHROMIUM_STATIC_VERSION must not be set',
+      )
     }
     return {
       directory: '',
@@ -21,14 +23,16 @@ export function getChromiumPaths(): ChromiumPaths {
       osConfig: BROWSER_OS_CONFIGS[Deno.build.os] || {
         platform: Deno.build.os,
         executablePath,
-        zipName: ''
-      }
+        zipName: '',
+      },
     }
   }
 
   // Otherwise, both CHROMIUM_DIRECTORY and CHROMIUM_STATIC_VERSION must be set
   if (!directory || !staticVersion) {
-    throw new Error('Either CHROMIUM_EXECUTABLE_PATH must be set to use your own Chrome/Chromium instance, or both CHROMIUM_DIRECTORY and CHROMIUM_STATIC_VERSION must be set to use a managed instance')
+    throw new Error(
+      'Either CHROMIUM_EXECUTABLE_PATH must be set to use your own Chrome/Chromium instance, or both CHROMIUM_DIRECTORY and CHROMIUM_STATIC_VERSION must be set to use a managed instance',
+    )
   }
 
   const osConfig = BROWSER_OS_CONFIGS[Deno.build.os]
@@ -57,13 +61,19 @@ export function getBrowserNameFromPath(executablePath: string): string {
 
 export async function doesProcessWithPortExist(port: number): Promise<boolean> {
   try {
-    const cmd = Deno.build.os === "windows"
-      ? new Deno.Command("netstat", { args: ["-ano", "|", "findstr", `:${port}`] })
-      : new Deno.Command("lsof", { args: ["-i", `:${port}`] });
-
-    const output = await cmd.output();
-    return output.success;
+    if (Deno.build.os === 'windows') {
+      const cmd = new Deno.Command('netstat', {
+        args: ['-ano'],
+      })
+      const output = await cmd.output()
+      const outputText = new TextDecoder().decode(output.stdout)
+      return outputText.includes(`:${port}`)
+    } else {
+      const cmd = new Deno.Command('lsof', { args: ['-i', `:${port}`] })
+      const output = await cmd.output()
+      return output.success
+    }
   } catch {
-    return false;
+    return false
   }
 }

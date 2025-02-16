@@ -52,8 +52,6 @@ interface CDPPlugin {
   onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
   onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
   onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-  sendCDPCommand?(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>;
-  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
 }
 ```
 

@@ -269,8 +269,6 @@ interface CDPPlugin {
   onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
   onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
   onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-  sendCDPCommand?(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>;
-  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
 }
 ```
 
@@ -294,6 +292,7 @@ interface CDPPlugin {
 #### Advanced Plugin Capabilities
 
 1. **Command Execution:**
+
    ```typescript
    async sendCDPCommand(endpoint: string, proxySessionId: string, message: CDPCommandRequest) {
      // Automatically handles:
@@ -306,6 +305,7 @@ interface CDPPlugin {
    ```
 
 2. **Event Emission:**
+
    ```typescript
    async emitClientEvent(proxySessionId: string, event: CDPEvent) {
      // Allows plugins to:
@@ -324,30 +324,6 @@ interface CDPPlugin {
    - Errors don't crash the proxy
    - Original messages pass through on error
    - Custom error types and codes for different scenarios
-
-#### Plugin Development Guidelines
-
-1. **Message Modification:**
-   - Preserve required fields (`id`, `method`, `params`)
-   - Maintain message type consistency
-   - Use proper error format for error responses
-
-2. **Performance Considerations:**
-   - Keep processing synchronous when possible
-   - Use async/await for external operations
-   - Consider message buffering for slow operations
-
-3. **Security Best Practices:**
-   - Validate all input parameters
-   - Sanitize injected content
-   - Handle sensitive data appropriately
-   - Implement proper error handling
-
-4. **Testing:**
-   - Test all message types (requests, responses, events)
-   - Verify error handling
-   - Check edge cases (timeouts, disconnections)
-   - Validate session management
 
 ## Configuration
 
