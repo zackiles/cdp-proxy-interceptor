@@ -9,9 +9,9 @@ import type { ErrorHandler } from './error_handler.ts'
 import type { SessionManager } from './session_manager.ts'
 import type { WebSocketManager } from './websocket_manager.ts'
 import { CDPErrorType } from './types.ts'
+import { BaseCDPPlugin } from './base_cdp_plugin.ts'
 
 type PluginMethod = 'onRequest' | 'onResponse' | 'onEvent'
-type ProcessResult<T> = Promise<T | null>
 type PluginError = {
   name: string
   message: string
@@ -32,6 +32,7 @@ export class PluginManager {
   private static readonly INVALID_PLUGIN_CODE = 2001
   private static readonly PLUGIN_MESSAGE_ID_BASE = 1000000000
   private static readonly PLUGIN_COMMAND_TIMEOUT = 5000 // 5 seconds
+  private static readonly CLEANUP_TIMEOUT = 5000 // 5 seconds
 
   private readonly plugins: CDPPlugin[] = []
   private pluginMessageIdCounter = PluginManager.PLUGIN_MESSAGE_ID_BASE
@@ -55,6 +56,18 @@ export class PluginManager {
       return
     }
 
+    // IMPORTANT: Check if the plugin extends BaseCDPPlugin
+    if (!(plugin instanceof BaseCDPPlugin)) {
+      this.errorHandler.handleError({
+        type: CDPErrorType.PLUGIN,
+        code: PluginManager.INVALID_PLUGIN_CODE,
+        message: 'Invalid plugin: must extend BaseCDPPlugin',
+        recoverable: true, //  arguably *not* recoverable, but we'll keep it consistent
+        details: { plugin },
+      })
+      return;
+    }
+
     // Inject helper methods before adding plugin
     this.injectPluginHelpers(plugin)
     this.plugins.push(plugin)
@@ -62,106 +75,74 @@ export class PluginManager {
 
   unregisterPlugin(plugin: CDPPlugin): void {
     const index = this.plugins.indexOf(plugin)
-    index !== -1 && this.plugins.splice(index, 1)
+    if (index !== -1) {
+      // Call cleanup if plugin implements it
+      if ('cleanup' in plugin && typeof plugin.cleanup === 'function') {
+        try {
+          const result = plugin.cleanup()
+          // Handle async cleanup
+          if (result instanceof Promise) {
+            result.catch(error => {
+              this.handlePluginError(plugin, 'cleanup', error)
+            })
+          }
+        } catch (error) {
+          this.handlePluginError(plugin, 'cleanup', error)
+        }
+      }
+      this.plugins.splice(index, 1)
+    }
   }
 
   async processRequest(
     request: CDPCommandRequest,
-  ): ProcessResult<CDPCommandRequest> {
+  ): Promise<CDPCommandRequest | null> {
     return this.processPluginChain(request, 'onRequest')
   }
 
   async processResponse(
     response: CDPCommandResponse,
-  ): ProcessResult<CDPCommandResponse> {
+  ): Promise<CDPCommandResponse | null> {
     return this.processPluginChain(response, 'onResponse')
   }
 
-  async processEvent(event: CDPEvent): ProcessResult<CDPEvent> {
+  async processEvent(event: CDPEvent): Promise<CDPEvent | null> {
     return this.processPluginChain(event, 'onEvent')
   }
 
   async processMessage(message: unknown): Promise<CDPMessage | null> {
     const cdpMessage = message as CDPMessage
-
-    // Add debug logging
-    console.debug(`[CDP PLUGIN] Processing message:`, cdpMessage)
-
-    // Check if this is a response to a plugin-initiated command
-    if (this.isCommandResponse(cdpMessage)) {
-      const { id } = cdpMessage
-      const pendingRequest = this.pluginRequestIdMap.get(id)
-      if (pendingRequest) {
-        console.debug(`[CDP PLUGIN] Found pending request for ID ${id}`)
-        const { resolve, reject, timeoutId } = pendingRequest
-        clearTimeout(timeoutId)
-        this.pluginRequestIdMap.delete(id)
-
-        if ('error' in cdpMessage && cdpMessage.error) {
-          console.debug(
-            `[CDP PLUGIN] Rejecting pending request with error:`,
-            cdpMessage.error,
-          )
-          reject(new Error(cdpMessage.error.message || 'Unknown CDP error'))
-        } else {
-          console.debug(
-            `[CDP PLUGIN] Resolving pending request with result:`,
-            cdpMessage.result,
-          )
-          resolve(cdpMessage)
-        }
-        return null // Don't forward plugin responses to the client
-      }
-    }
-
     let processedMessage: CDPMessage | null = cdpMessage
-    for (const plugin of this.plugins) {
-      if (!processedMessage) {
-        console.debug(`[CDP PLUGIN] Message blocked by previous plugin`)
-        break
-      }
 
+    for (const plugin of this.plugins) {
+      if (!processedMessage || plugin._state?.cleaning) continue
+      
       try {
-        if ('id' in processedMessage) {
-          if ('result' in processedMessage || 'error' in processedMessage) {
-            console.debug(
-              `[CDP PLUGIN] Processing response through plugin ${plugin.name}`,
-            )
-            processedMessage =
-              (await plugin.onResponse?.(
-                processedMessage as CDPCommandResponse,
-              )) ?? processedMessage
-          } else {
-            console.debug(
-              `[CDP PLUGIN] Processing request through plugin ${plugin.name}`,
-            )
-            processedMessage =
-              (await plugin.onRequest?.(
-                processedMessage as CDPCommandRequest,
-              )) ?? processedMessage
-          }
-        } else if ('method' in processedMessage) {
-          console.debug(
-            `[CDP PLUGIN] Processing event through plugin ${plugin.name}`,
-          )
-          processedMessage =
-            (await plugin.onEvent?.(processedMessage as CDPEvent)) ??
-            processedMessage
-        }
+        processedMessage = await this.processPluginMessage(plugin, processedMessage)
       } catch (error) {
-        console.error(`[CDP PLUGIN] Error in plugin ${plugin.name}:`, error)
         this.handlePluginError(plugin, 'processMessage', error)
       }
     }
 
-    console.debug(`[CDP PLUGIN] Final processed message:`, processedMessage)
     return processedMessage
+  }
+
+  private async processPluginMessage(plugin: CDPPlugin, message: CDPMessage): Promise<CDPMessage | null> {
+    if ('id' in message) {
+      return 'result' in message || 'error' in message
+        ? await plugin.onResponse?.(message as CDPCommandResponse) ?? message
+        : await plugin.onRequest?.(message as CDPCommandRequest) ?? message
+    }
+    
+    return 'method' in message
+      ? await plugin.onEvent?.(message as CDPEvent) ?? message
+      : message
   }
 
   private async processPluginChain<T>(
     initial: T,
     method: PluginMethod,
-  ): ProcessResult<T> {
+  ): Promise<T | null> {
     let current: T | null = initial
 
     for (const plugin of this.plugins) {
@@ -216,7 +197,35 @@ export class PluginManager {
 
   hasPlugins = (): boolean => this.plugins.length > 0
 
-  clearPlugins = (): void => {
+  clearPlugins = async (): Promise<void> => {
+    const cleanupPromises: Promise<void>[] = []
+    
+    for (const plugin of this.plugins) {
+      if (!('cleanup' in plugin) || typeof plugin.cleanup !== 'function') continue
+
+      try {
+        plugin._state = { cleaning: true, cleanupStarted: Date.now() }
+        
+        const cleanupPromise = Promise.race([
+          plugin.cleanup(),
+          new Promise<void>((_, reject) => 
+            setTimeout(() => reject(new Error(
+              `Plugin ${plugin.name} cleanup timed out after ${PluginManager.CLEANUP_TIMEOUT}ms`
+            )), PluginManager.CLEANUP_TIMEOUT)
+          )
+        ]).catch(error => {
+          this.handlePluginError(plugin, 'cleanup', error)
+          plugin._state = undefined
+        })
+
+        cleanupPromises.push(cleanupPromise)
+      } catch (error) {
+        this.handlePluginError(plugin, 'cleanup', error)
+        plugin._state = undefined
+      }
+    }
+
+    cleanupPromises.length && await Promise.all(cleanupPromises)
     this.plugins.length = 0
   }
 
@@ -224,7 +233,6 @@ export class PluginManager {
    * Sends a CDP command on behalf of a plugin
    */
   async sendCDPCommand(
-    plugin: CDPPlugin,
     endpoint: string,
     proxySessionId: string,
     message: CDPCommandRequest,
@@ -305,8 +313,10 @@ export class PluginManager {
 
   // Add method to inject the helper functions into plugins
   private injectPluginHelpers(plugin: CDPPlugin): void {
-    // Bind the helper methods to the plugin instance
-    plugin.sendCDPCommand = this.sendCDPCommand.bind(this, plugin)
-    plugin.emitClientEvent = this.emitClientEvent.bind(this)
+    // Bind the helper methods to the *PluginManager* instance,
+    // but assign them to the *plugin* instance.  This makes them
+    // available via `this` within the plugin.
+    plugin.sendCDPCommand = this.sendCDPCommand.bind(this);
+    plugin.emitClientEvent = this.emitClientEvent.bind(this);
   }
 }

@@ -1,9 +1,10 @@
-import type { CDPPlugin, CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts'
+import type { CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts'
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts'
 
-export default class MessageModifierPlugin implements CDPPlugin {
-  name = 'Advanced Example Plugin'
+export default class MessageModifierPlugin extends BaseCDPPlugin {
+    name = 'Advanced Example Plugin'
 
-  async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
+    override async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
     // Ensure we have the required fields according to CDP protocol
     if (!request.id || !request.method) return request
 
@@ -27,7 +28,7 @@ export default class MessageModifierPlugin implements CDPPlugin {
     return request
   }
 
-  async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null> {
+  override async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null> {
     // Ensure we have the required id field
     if (!response.id) return response
 
@@ -50,7 +51,7 @@ export default class MessageModifierPlugin implements CDPPlugin {
     return response
   }
 
-  async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
     // Ensure we have the required method field
     if (!event.method) return event
 
@@ -65,4 +66,11 @@ export default class MessageModifierPlugin implements CDPPlugin {
 
     return event
   }
+
+  /**
+   * You can also add a cleanup method, but if you need to do something when the plugin is being disposed
+  override cleanup(): Promise<void> | void {
+    return Promise.resolve()
+  }
+  */
 } 

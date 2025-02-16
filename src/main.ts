@@ -175,6 +175,7 @@ export default async function startProxy(port: number) {
 
     return {
       server,
+      components,
       cleanup: async () => {
         console.log(`[CDP PROXY] Cleaning up...`)
         abortController.abort()

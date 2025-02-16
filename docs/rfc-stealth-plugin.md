@@ -47,82 +47,64 @@ From prior research (and the patch details), to hide `Runtime.enable`:
 Below is a fully working **plugin** that implements the CDP Proxy Interceptor's `CDPPlugin` interface with all necessary methods:
 
 ```typescript
-interface CDPPlugin {
-  name: string;
-  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
-  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
-  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-}
-```
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts';
+import type { CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts';
 
-The plugin implementation follows:
-
-```js
-export default {
-  name: "RuntimeEnableMitMPlugin",
+export default class RuntimeEnableMitMPlugin extends BaseCDPPlugin {
+  name = "RuntimeEnableMitMPlugin";
 
   // Tracks if a session thinks "Runtime is enabled" so we can
   // give them synthetic contexts and skip real calls.
-  sessionsRuntimeEnabled: new Map(), // key=CDP sessionId, value=boolean
+  private sessionsRuntimeEnabled = new Map<string, boolean>();
 
   // Track known frames and their assigned contextIds:
-  frameContexts: new Map(), // key=frameId, value=executionContextId
+  private frameContexts = new Map<string, number>();
 
-  async onRequest(request) {
+  override async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
     // request = parsed JSON object: {id, method, params, sessionId}
-    if (!request || !request.method) return request;
+    if (!request?.method) return request;
 
     // 1. Intercept "Runtime.enable"
     if (request.method === "Runtime.enable") {
       // Mark that the session wants the runtime domain
-      this.sessionsRuntimeEnabled.set(request.sessionId, true);
+      this.sessionsRuntimeEnabled.set(request.sessionId!, true);
 
       // Return a fake success response right away.
       // We'll NOT forward this to the real browser.
-      const mockResponse = {
+      const mockResponse: CDPCommandResponse = {
         id: request.id,
         result: {}
       };
-      // Short-circuit: send mock response, skip real request.
-      await this.emitClientEvent(request.sessionId, mockResponse);
+      // Short-circuit: send mock response through the normal response channel
+      await this.sendCDPCommand(request.sessionId!, mockResponse);
       return null; // signal to drop this request
     }
 
-    // Let other calls pass through
-    return request;
-  },
+    return request; // Let other calls pass through
+  }
 
-  async onResponse(response) {
+  override async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse> {
     // Typically do not manipulate responses here for this patch approach.
     return response;
-  },
+  }
 
-  async onEvent(event) {
-    // event = parsed JSON object: {method, params, sessionId}
-    if (!event || !event.method) return event;
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+    if (!event?.method) return event;
 
     // 2. Observe new frames or workers
     if (event.method === "Page.frameAttached" ||
-        event.method === "Page.frameNavigated") {
-      const sessionId = event.sessionId;
-      if (!this.sessionsRuntimeEnabled.get(sessionId)) {
-        // If the user never tried to enable runtime, do nothing special.
-        return event;
-      }
-
-      // Extract or generate frameId
-      const frameId = event.params.frame?.id || event.params.frameId;
-      if (!frameId) return event;
-
-      // If we haven't created a context yet for this frame, do it now
-      if (!this.frameContexts.has(frameId)) {
+        event.method === "Page.frameNavigated" ||
+        event.method === "Target.attachedToTarget") {
+      const sessionId = event.sessionId!;
+      // Only create contexts if Runtime.enable was "requested"
+      if (this.sessionsRuntimeEnabled.get(sessionId)) {
+        // Create a real isolated world in the browser
+        const frameId = event.params?.frameId || event.params?.targetInfo?.targetId;
         const contextId = await this.createIsolatedContext(sessionId, frameId);
-        // store the mapping
-        this.frameContexts.set(frameId, contextId);
+        this.frameContexts.set(frameId!, contextId);
 
-        // 3. Emit a synthetic Runtime.executionContextCreated event
-        // so Playwright believes that a normal main-world context was created:
-        const fakeContextCreated = {
+        // 3. Emit the fake "Runtime.executionContextCreated"
+        const fakeContextCreated: CDPEvent = {
           method: "Runtime.executionContextCreated",
           params: {
             context: {
@@ -142,13 +124,13 @@ export default {
     }
 
     return event;
-  },
+  }
 
   /**
    * Creates a new isolated context in the real browser by calling
    * Page.createIsolatedWorld and returns the executionContextId.
    */
-  async createIsolatedContext(sessionId, frameId) {
+  private async createIsolatedContext(sessionId: string, frameId: string): Promise<number> {
     const result = await this.sendCDPCommand(
       "/devtools/page/" + frameId,
       sessionId,
@@ -161,18 +143,9 @@ export default {
         }
       }
     );
-    return result.executionContextId;
-  },
-
-  /**
-   * Send a synthetic response to the client for a request
-   * we do not want to forward to the actual browser.
-   */
-  async emitClientEvent(sessionId, responseBody) {
-    // The CDP Proxy Interceptor will handle routing this event to the correct client session
-    // through its WebSocket manager and session tracking system
+    return result.result?.executionContextId as number;
   }
-} as CDPPlugin;
+}
 ```
 
 **Key Points**  
