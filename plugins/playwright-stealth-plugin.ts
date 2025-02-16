@@ -85,6 +85,12 @@ export class RuntimeEnableMitMPlugin extends BaseCDPPlugin {
           method: 'Runtime.enable',
           params: mockResponse,
         })
+
+        await this.emitClientEvent?.(request.sessionId, {
+          method: 'Runtime.executionContextCreated',
+          params: {},
+        })
+
         return null // Drop the original request
       } catch (error) {
         console.error('Failed to handle Runtime.enable:', error)
