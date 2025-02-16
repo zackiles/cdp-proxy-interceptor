@@ -80,182 +80,7 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
 
 ## Plugin Examples
 
-### 1. Modifying User Agent
-
-You can use a plugin to modify the user agent reported by the browser. This is useful for testing responsive designs or accessing content that's tailored to specific browsers or devices.
-
-For complete details on plugin development, see the [Plugin Specification](docs/plugin-specification.md).
-
-**Example (using a modified `advanced_plugin.ts`):**
-
-```typescript
-export default {
-  name: "UserAgentPlugin",
-
-  async onRequest(request) {
-    if (request.method === "Network.setUserAgentOverride") {
-      return {
-        ...request,
-        params: {
-          ...request.params,
-          userAgent: `${request.params.userAgent} [Modified by Proxy]`
-        }
-      }
-    }
-    return request
-  },
-
-  // Optional: Monitor user agent changes
-  async onResponse(response) {
-    if (response.id && 'result' in response) {
-      // Log successful user agent changes
-      console.log('User agent updated successfully')
-    }
-    return response
-  }
-}
-```
-
-### 2. Advanced Request Interception
-
-This example shows how to use session management and command execution to implement sophisticated request handling:
-
-```typescript
-export default {
-  name: "RequestInterceptionPlugin",
-
-  async onRequest(request) {
-    if (request.method === "Network.continueInterceptedRequest") {
-      const { interceptionId, url } = request.params
-
-      if (url?.includes("ads")) {
-        // Block ad requests
-        return null
-      }
-
-      if (url?.includes("api")) {
-        try {
-          // Get the session context for the request
-          const session = await this.sendCDPCommand(
-            '/devtools/page/123',
-            request.sessionId,
-            {
-              method: 'Network.getRequestPostData',
-              params: { interceptionId }
-            }
-          )
-
-          // Modify the request based on post data
-          if (session.result?.postData) {
-            return {
-              ...request,
-              params: {
-                ...request.params,
-                postData: this.modifyPostData(session.result.postData)
-              }
-            }
-          }
-        } catch (error) {
-          // Handle errors gracefully
-          console.warn(`Failed to modify request: ${error.message}`)
-        }
-      }
-    }
-    return request
-  },
-
-  // Helper method to modify post data
-  modifyPostData(data) {
-    // Add custom logic here
-    return data
-  }
-}
-```
-
-### 3. Event Monitoring and Injection
-
-This example demonstrates how to use event handling and emission:
-
-```typescript
-export default {
-  name: "EventMonitorPlugin",
-
-  async onEvent(event) {
-    // Monitor page load events
-    if (event.method === "Page.loadEventFired") {
-      try {
-        // Emit a custom event to the client
-        await this.emitClientEvent(event.sessionId, {
-          method: "Custom.pageLoadComplete",
-          params: {
-            timestamp: Date.now(),
-            metrics: await this.getPageMetrics(event.sessionId)
-          }
-        })
-      } catch (error) {
-        console.error(`Failed to emit custom event: ${error.message}`)
-      }
-    }
-    return event
-  },
-
-  // Helper method to gather page metrics
-  async getPageMetrics(sessionId) {
-    const result = await this.sendCDPCommand(
-      '/devtools/page/123',
-      sessionId,
-      {
-        method: 'Performance.getMetrics'
-      }
-    )
-    return result.result?.metrics || []
-  }
-}
-```
-
-### 4. Extending CDP with Custom Commands
-
-You can create plugins that adds new commands or enhances existing CDP commands. This allows you to build higher-level abstractions or combine multiple CDP commands into a single operation.
-
-**Example (Enhanced DOM Query):**
-
-```typescript
-export default {
-  name: "EnhancedDOMPlugin",
-  
-  async onRequest(request) {
-    if (request.method === "Enhanced.getElementInfo") {
-      const { nodeId } = request.params;
-      
-      // Combine multiple CDP commands into one enhanced operation
-      const [boxModel, styles] = await Promise.all([
-        this.sendCommand({ method: "DOM.getBoxModel", params: { nodeId } }),
-        this.sendCommand({ 
-          method: "Runtime.evaluate",
-          params: {
-            expression: `(() => {
-              const el = document.querySelector('[data-nodeid="${nodeId}"]');
-              return window.getComputedStyle(el);
-            })()`
-          }
-        })
-      ]);
-
-      // Return enriched response combining multiple CDP results
-      return {
-        id: request.id,
-        result: {
-          dimensions: boxModel.model,
-          computedStyle: styles.result
-        }
-      };
-    }
-    return request;
-  }
-}
-```
-
-This plugin creates an `Enhanced.getElementInfo` command that combines `DOM.getBoxModel` and `Runtime.evaluate` to return both the element's dimensions and computed styles in a single call. This is more efficient than making multiple CDP calls from your client code.
+For detailed plugin examples and the full API, see the [Plugin Specification](docs/plugin-specification.md) and the example plugins in the `/plugins` directory.
 
 ### Plugin Interface Details
 
@@ -263,67 +88,48 @@ The CDP Proxy Interceptor provides a robust plugin interface with several key me
 
 #### Core Plugin Methods
 
-```typescript
-interface CDPPlugin {
-  name: string;
-  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
-  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
-  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-}
-```
+Plugins extend the `BaseCDPPlugin` class and can override the following methods:
 
-#### Message Handling
+| Method        | Description                                                                                                                                                                                                                                                           |
+|---------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `onRequest`   | Called when a CDP command request is received from the client. Plugins can modify, block, or respond to the request. Returns `Promise<CDPCommandRequest | null>`.                                                                                                                                               |
+| `onResponse`  | Called when a CDP command response is received from the browser. Plugins can modify or block the response. Returns `Promise<CDPCommandResponse | null>`.                                                                                                                                            |
+| `onEvent`     | Called when a CDP event is received from the browser. Plugins can modify or block the event. Returns `Promise<CDPEvent | null>`.                                                                                                                                                          |
+| `cleanup`     | Called when the plugin is being disposed. Plugins should use this to clean up any resources they have allocated. Returns `Promise<void>`.                                                                                                                                |
 
-1. **Message Flow:**
-   - Requests from client → `onRequest` → Chrome
-   - Responses from Chrome → `onResponse` → client
-   - Events from Chrome → `onEvent` → client
-
-2. **Message IDs:**
-   - Plugin-initiated commands use IDs starting from `1000000000`
-   - Responses to plugin commands are automatically matched and routed back
-   - Plugin command responses are not forwarded to the client
-
-3. **Session Management:**
-   - Each WebSocket connection gets a unique session ID
-   - Plugins can use session IDs to maintain state and context
-   - Session IDs are required for `sendCDPCommand` and `emitClientEvent`
+Plugins can send CDP commands using the injected `this.sendCDPCommand` method and emit CDP events using the injected `this.emitClientEvent` method.
 
 #### Advanced Plugin Capabilities
 
-1. **Command Execution:**
+1. **Command Execution:** Plugins can send CDP commands to the browser using the injected `this.sendCDPCommand` method. This method automatically handles message ID generation, response matching, timeouts, WebSocket state validation, and error handling.
 
-   ```typescript
-   async sendCDPCommand(endpoint: string, proxySessionId: string, message: CDPCommandRequest) {
-     // Automatically handles:
-     // - Message ID generation
-     // - Response matching
-     // - Timeouts (5 second default)
-     // - WebSocket state validation
-     // - Error handling
-   }
-   ```
+2. **Event Emission:** Plugins can emit CDP events (but not responses) to the client using the injected `this.emitClientEvent` method. This allows plugins to send custom events, simulate browser events, and provide plugin-specific notifications.
 
-2. **Event Emission:**
+3. **Message Blocking:** Return `null` from `onRequest`, `onResponse`, or `onEvent` to prevent the message from being propagated.
 
-   ```typescript
-   async emitClientEvent(proxySessionId: string, event: CDPEvent) {
-     // Allows plugins to:
-     // - Send custom events to clients
-     // - Simulate browser events
-     // - Provide plugin-specific notifications
-   }
-   ```
+4. **Error Handling:** Plugin errors are caught and logged. Errors do not crash the proxy, and the original message will pass through unless blocked by the plugin.
 
-3. **Message Blocking:**
-   - Return `null` from any handler to block message propagation
-   - Useful for filtering, security, or implementing custom behavior
+### **7.5 Plugin Example: Ad-Blocking**
 
-4. **Error Handling:**
-   - Plugin errors are caught and logged
-   - Errors don't crash the proxy
-   - Original messages pass through on error
-   - Custom error types and codes for different scenarios
+```typescript
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts';
+import type { CDPEvent } from '../src/types.ts';
+
+export default class BlockRequestsPlugin extends BaseCDPPlugin {
+  name = "BlockRequests";
+
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+    if (event.method === "Network.requestWillBeSent") {
+      const url = event.params?.request?.url;
+      if (url?.includes("ads.com")) {
+        console.log(`[BlockRequests] Blocking request: ${url}`);
+        return null; // drop the message
+      }
+    }
+    return event;
+  }
+}
+```
 
 ## Configuration
 

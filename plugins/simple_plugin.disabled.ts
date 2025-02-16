@@ -1,20 +1,28 @@
-import type { CDPPlugin, CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts'
+import type { CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts'
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts'
 
-export class LoggingPlugin implements CDPPlugin {
+export class LoggingPlugin extends BaseCDPPlugin {
   name = 'Simple Example Plugin'
 
-  async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
+  override async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> {
     console.log('[CDP Plugin] Intercepted request:', request)
     return request
   }
 
-  async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null> {
+  override async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null> {
     console.log('[CDP Plugin] Intercepted response:', response)
     return response
   }
 
-  async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
     console.log('[CDP Plugin] Intercepted event:', event)
     return event
   }
+  
+  /**
+   * You can also add a cleanup method, but if you need to do something when the plugin is being disposed
+  override cleanup(): Promise<void> | void {
+    return Promise.resolve()
+  }
+  */
 }

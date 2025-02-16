@@ -1374,6 +1374,12 @@ export class EnhancedCDPProxy {
     try {
       await this.validator.initialize();
       await this.chromeManager.start();
+      // Initialize plugins that have initialize method
+      for (const plugin of this.pluginManager.getPlugins()) {
+        if (plugin.initialize) {
+          await plugin.initialize();
+        }
+      }
     } catch (error) {
       await this.cleanup();
       throw new Error(`Failed to initialize proxy: ${error.message}`);
@@ -1381,6 +1387,8 @@ export class EnhancedCDPProxy {
   }
 
   private async cleanup() {
+    // Clean up plugins first
+    await this.pluginManager?.clearPlugins();
     await this.chromeManager?.stop();
     this.messageBuffer?.dispose();
   }
@@ -1540,6 +1548,7 @@ export interface CDPPlugin {
   version: string;
   initialize?: () => Promise<void>;
   shutdown?: () => Promise<void>;
+  cleanup?(): void | Promise<void>;  // Optional cleanup method for resource management
   onCDPMessage?: (
     msg: any,
     session: CDPSession,
@@ -1996,6 +2005,12 @@ class EnhancedCDPProxy {
     try {
       await this.validator.initialize();
       await this.chromeManager.start();
+      // Initialize plugins that have initialize method
+      for (const plugin of this.pluginManager.getPlugins()) {
+        if (plugin.initialize) {
+          await plugin.initialize();
+        }
+      }
     } catch (error) {
       await this.cleanup();
       throw new Error(`Failed to initialize proxy: ${error.message}`);
@@ -2003,116 +2018,17 @@ class EnhancedCDPProxy {
   }
 
   private async cleanup() {
+    // Clean up plugins first
+    await this.pluginManager?.clearPlugins();
     await this.chromeManager?.stop();
     this.messageBuffer?.dispose();
   }
 }
 ```
 
-### **11.2 Port Management**
-```typescript
-class ChromeManager {
-  private async findAvailablePort(): Promise<number> {
-    const getPort = async (start: number, end: number): Promise<number> => {
-      for (let port = start; port <= end; port++) {
-        try {
-          const server = Deno.listen({ port });
-          server.close();
-          return port;
-        } catch {
-          continue;
-        }
-      }
-      throw new Error('No available ports');
-    };
-    return getPort(9222, 9230);
-  }
-}
-```
-
-### **11.3 WebSocket Handler Management**
-```typescript
-class WebSocketManager {
-  private readonly HANDLER_CLEANUP_INTERVAL = 300000; // 5 minutes
-  private cleanupInterval: number;
-
-  constructor() {
-    this.startCleanupInterval();
-  }
-
-  private startCleanupInterval() {
-    this.cleanupInterval = setInterval(() => {
-      for (const [key, handlers] of this.eventHandlers.entries()) {
-        if (!this.isHandlerActive(handlers)) {
-          this.eventHandlers.delete(key);
-        }
-      }
-    }, this.HANDLER_CLEANUP_INTERVAL);
-  }
-
-  private isHandlerActive(handlers: WebSocketEventHandlers): boolean {
-    return Object.values(handlers).some(handler => handler !== null);
-  }
-}
-```
-
-### **11.4 Session Concurrency Control**
-```typescript
-class SessionManager {
-  private sessionLock = new Map<string, Promise<void>>();
-
-  async createSession(clientWs: WebSocket, externalId?: string): Promise<CDPSession> {
-    const lockKey = externalId || 'default';
-    
-    // Wait for any existing operation to complete
-    await this.sessionLock.get(lockKey);
-    
-    let releaseLock: () => void;
-    const lockPromise = new Promise<void>(resolve => {
-      releaseLock = resolve;
-    });
-    
-    this.sessionLock.set(lockKey, lockPromise);
-    
-    try {
-      const session = await this._createSession(clientWs, externalId);
-      return session;
-    } finally {
-      releaseLock!();
-      this.sessionLock.delete(lockKey);
-    }
-  }
-}
-```
-
-### **11.5 Message Buffer Size Control**
-```typescript
-class PartialMessageBuffer {
-  private readonly MAX_BUFFER_SIZE_PER_SESSION = 1024 * 1024; // 1MB per session
-  
-  handleMessageFragment(raw: string, sessionId: string): any {
-    const currentSize = this.getSessionBufferSize(sessionId);
-    const newSize = currentSize + raw.length;
-    
-    if (newSize > this.MAX_BUFFER_SIZE_PER_SESSION) {
-      throw new Error(`Session buffer limit exceeded for session ${sessionId}`);
-    }
-    
-    // ... rest of the handling logic
-  }
-  
-  private getSessionBufferSize(sessionId: string): number {
-    return (this.buffers.get(sessionId) || '').length;
-  }
-}
-```
-
-These critical implementation notes address several key safety and reliability concerns:
-1. Proper initialization and cleanup to prevent resource leaks
-2. Robust port finding with proper error handling
-3. Automatic cleanup of stale WebSocket handlers
-4. Concurrency control for session management
-5. Per-session buffer size limits to prevent memory exhaustion
-
-Each component includes proper error handling, resource cleanup, and safety measures to ensure reliable operation in production environments.
+The cleanup process ensures:
+1. All plugins get a chance to clean up their resources
+2. Async cleanup operations are properly awaited
+3. Chrome process is terminated
+4. Message buffers are disposed
 

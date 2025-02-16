@@ -1,9 +1,9 @@
 import type {
-  CDPPlugin,
   CDPCommandRequest,
   CDPCommandResponse,
   CDPEvent,
 } from '../src/types.ts'
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts'
 
 // Extend base CDP types with specific params/results
 interface CDPTargetInfo {
@@ -31,7 +31,7 @@ interface CDPIsolatedWorldResponse extends CDPCommandResponse {
 }
 
 // NOTE: See RFC for this plugin in docs/playwright-stealth-plugin.md
-export class RuntimeEnableMitMPlugin implements CDPPlugin {
+export class RuntimeEnableMitMPlugin extends BaseCDPPlugin {
   name = 'RuntimeEnableMitMPlugin'
 
   // Tracks if a session thinks "Runtime is enabled" so we can
@@ -41,165 +41,223 @@ export class RuntimeEnableMitMPlugin implements CDPPlugin {
   // Track known frames and their assigned contextIds:
   frameContexts: Map<string, number> = new Map() // key=frameId, value=executionContextId
 
-  // These will be injected by the plugin manager
-  declare sendCDPCommand: (
-    endpoint: string,
-    proxySessionId: string,
-    message: CDPCommandRequest,
-  ) => Promise<CDPCommandResponse>
-  declare emitClientEvent: (
-    proxySessionId: string,
-    event: CDPEvent,
-  ) => Promise<void>
+  // Track worker contexts separately
+  workerContexts: Map<string, number> = new Map() // key=workerId, value=executionContextId
 
-  async onRequest(
+  override async onRequest(
     request: CDPCommandRequest,
   ): Promise<CDPCommandRequest | null> {
-    if (!request || !request.method) return request
+    if (!request?.method) return request
 
     if (request.method === 'Runtime.enable') {
       if (!request.sessionId) {
+        console.warn('Runtime.enable called without sessionId')
         return request
       }
 
-      this.sessionsRuntimeEnabled.set(request.sessionId, true)
+      try {
+        this.sessionsRuntimeEnabled.set(request.sessionId, true)
 
-      const mockResponse = {
-        id: request.id,
-        result: {},
+        const mockResponse = {
+          id: request.id,
+          result: {},
+        }
+
+        await this.emitClientEvent?.(request.sessionId, {
+          method: 'Runtime.enable',
+          params: mockResponse,
+        })
+        return null // Drop the original request
+      } catch (error) {
+        console.error('Failed to handle Runtime.enable:', error)
+        throw error // Let the proxy handle the error
       }
-
-      await this.emitClientEvent?.(request.sessionId, {
-        method: 'Runtime.enable',
-        params: mockResponse,
-      })
-      return null
     }
 
     return request
   }
 
-  async onResponse(
+  override async onResponse(
     response: CDPCommandResponse,
   ): Promise<CDPCommandResponse | null> {
     // Typically do not manipulate responses here for this patch approach.
     return response
   }
 
-  async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
-    if (!event || !event.method) return event
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+    if (!event?.method) return event
 
-    if (
-      event.method === 'Page.frameAttached' ||
-      event.method === 'Page.frameNavigated'
-    ) {
-      const { sessionId } = event
-      if (!sessionId || !this.sessionsRuntimeEnabled.get(sessionId)) {
-        return event
+    try {
+      // Handle frame lifecycle events
+      if (
+        event.method === 'Page.frameAttached' ||
+        event.method === 'Page.frameNavigated'
+      ) {
+        return await this.handleFrameEvent(event)
       }
 
-      // Extract or generate frameId
-      const frameId =
-        (event as CDPFrameEvent).params.frame?.id ||
-        (event as CDPFrameEvent).params.frameId
-      if (!frameId) return event
-
-      // If we haven't created a context yet for this frame, do it now
-      if (!this.frameContexts.has(frameId)) {
-        const contextId = await this.createIsolatedContext(sessionId, frameId)
-        // store the mapping
-        this.frameContexts.set(frameId, contextId as number)
-
-        // 3. Emit a synthetic Runtime.executionContextCreated event
-        // so Playwright believes that a normal main-world context was created:
-        const fakeContextCreated = {
-          method: 'Runtime.executionContextCreated',
-          params: {
-            context: {
-              id: contextId,
-              origin: '', //  RFC: Empty string
-              name: '', // RFC: Empty string
-              auxData: {
-                frameId,
-                isDefault: true,
-              },
-            },
-          },
-          sessionId,
-        }
-        // Corrected: Use this.emitClientEvent
-        await this.emitClientEvent(sessionId, fakeContextCreated)
+      // Handle frame cleanup
+      if (event.method === 'Page.frameDetached') {
+        return await this.handleFrameDetached(event)
       }
+
+      // Handle worker events
+      if (event.method === 'Target.attachedToTarget') {
+        return await this.handleWorkerEvent(event)
+      }
+
+      // Handle worker cleanup
+      if (event.method === 'Target.detachedFromTarget') {
+        return await this.handleWorkerDetached(event)
+      }
+
+      return event
+    } catch (error) {
+      console.error(`Failed to handle event ${event.method}:`, error)
+      return event // Return original event on error
+    }
+  }
+
+  private async handleFrameEvent(event: CDPEvent): Promise<CDPEvent> {
+    const { sessionId } = event
+    if (!sessionId || !this.sessionsRuntimeEnabled.get(sessionId)) {
+      return event
     }
 
-    // 2.b Observe new workers
-    if (event.method === 'Target.attachedToTarget') {
-      const sessionId = event.sessionId
+    const frameId =
+      (event as CDPFrameEvent).params.frame?.id ||
+      (event as CDPFrameEvent).params.frameId
+    if (!frameId) return event
 
-      if (!sessionId || !this.sessionsRuntimeEnabled.get(sessionId)) {
-        return event
-      }
-
-      const { targetInfo } = (event as CDPTargetEvent).params
-      if (!targetInfo) {
-        return event
-      }
-
-      const { type, targetId: frameId } = targetInfo
-      if (type !== 'worker' && type !== 'service_worker') {
-        return event
-      }
-
-      if (!this.frameContexts.has(frameId)) {
+    // If we haven't created a context yet for this frame, do it now
+    if (!this.frameContexts.has(frameId)) {
+      try {
         const contextId = await this.createIsolatedContext(sessionId, frameId)
-        this.frameContexts.set(frameId, contextId as number)
+        this.frameContexts.set(frameId, contextId)
 
-        const fakeContextCreated = {
-          method: 'Runtime.executionContextCreated',
-          params: {
-            context: {
-              id: contextId,
-              origin: '',
-              name: '',
-              auxData: {
-                frameId,
-                isDefault: false, // Workers are not default contexts
-              },
-            },
-          },
-          sessionId,
-        }
-        // Corrected: Use this.emitClientEvent
-        await this.emitClientEvent(sessionId, fakeContextCreated)
+        await this.emitSyntheticContext(sessionId, contextId, frameId, true)
+      } catch (error) {
+        console.error(`Failed to create context for frame ${frameId}:`, error)
       }
     }
 
     return event
   }
 
+  private async handleFrameDetached(event: CDPEvent): Promise<CDPEvent> {
+    const frameId = (event as CDPFrameEvent).params.frameId
+    if (frameId) {
+      this.frameContexts.delete(frameId)
+    }
+    return event
+  }
+
+  private async handleWorkerEvent(event: CDPEvent): Promise<CDPEvent> {
+    const { sessionId } = event
+    if (!sessionId || !this.sessionsRuntimeEnabled.get(sessionId)) {
+      return event
+    }
+
+    const { targetInfo } = (event as CDPTargetEvent).params
+    if (!targetInfo) return event
+
+    const { type, targetId: workerId } = targetInfo
+    if (type !== 'worker' && type !== 'service_worker') {
+      return event
+    }
+
+    if (!this.workerContexts.has(workerId)) {
+      try {
+        const contextId = await this.createIsolatedContext(sessionId, workerId)
+        this.workerContexts.set(workerId, contextId)
+
+        await this.emitSyntheticContext(sessionId, contextId, workerId, false)
+      } catch (error) {
+        console.error(`Failed to create context for worker ${workerId}:`, error)
+      }
+    }
+
+    return event
+  }
+
+  private async handleWorkerDetached(event: CDPEvent): Promise<CDPEvent> {
+    const workerId = (event as CDPTargetEvent).params.targetInfo?.targetId
+    if (workerId) {
+      this.workerContexts.delete(workerId)
+    }
+    return event
+  }
+
+  private async emitSyntheticContext(
+    sessionId: string,
+    contextId: number,
+    frameId: string,
+    isDefault: boolean,
+  ): Promise<void> {
+    const syntheticEvent = {
+      method: 'Runtime.executionContextCreated',
+      params: {
+        context: {
+          id: contextId,
+          origin: '', // RFC: Empty string
+          name: '', // RFC: Empty string
+          auxData: {
+            frameId,
+            isDefault,
+          },
+        },
+      },
+      sessionId,
+    }
+
+    await this.emitClientEvent(sessionId, syntheticEvent)
+  }
+
   /**
    * Creates a new isolated context in the real browser by calling
    * Page.createIsolatedWorld and returns the executionContextId.
    */
-  async createIsolatedContext(sessionId: string, frameId: string) {
+  private async createIsolatedContext(
+    sessionId: string,
+    frameId: string,
+  ): Promise<number> {
     if (!this.sendCDPCommand) {
       throw new Error('sendCDPCommand not available')
     }
 
-    const result = (await this.sendCDPCommand(
-      `/devtools/page/${frameId}`,
-      sessionId,
-      {
-        id: Date.now(),
-        method: 'Page.createIsolatedWorld',
-        params: {
-          frameId,
-          worldName: `__MITM_InvisibleWorld_${frameId}`,
-          grantUniveralAccess: true,
+    try {
+      const result = (await this.sendCDPCommand(
+        `/devtools/page/${frameId}`,
+        sessionId,
+        {
+          id: Date.now(),
+          method: 'Page.createIsolatedWorld',
+          params: {
+            frameId,
+            worldName: `__MITM_InvisibleWorld_${frameId}`,
+            grantUniveralAccess: true,
+          },
         },
-      },
-    )) as CDPIsolatedWorldResponse
-    return result.result.executionContextId
+      )) as CDPIsolatedWorldResponse
+
+      if (!result?.result?.executionContextId) {
+        throw new Error('Failed to get executionContextId from isolated world creation')
+      }
+
+      return result.result.executionContextId
+    } catch (error) {
+      console.error(`Failed to create isolated context for ${frameId}:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * Cleanup method to be called when the plugin is being disposed
+   */
+  override cleanup(): void {
+    this.sessionsRuntimeEnabled.clear()
+    this.frameContexts.clear()
+    this.workerContexts.clear()
   }
 }
 

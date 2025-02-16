@@ -196,10 +196,6 @@ Deno.test({
     const pluginManager = new PluginManager(mockErrorHandler, mockSessionManager, mockWsManager)
 
     await t.step('sendCDPCommand - invalid session ID', async () => {
-      const mockPlugin: CDPPlugin = {
-        name: 'test-plugin',
-      }
-
       const mockRequest: CDPCommandRequest = {
         id: 1,
         method: 'Page.navigate',
@@ -207,7 +203,11 @@ Deno.test({
       }
 
       await assertRejects(
-        () => pluginManager.sendCDPCommand(mockPlugin, '/devtools/page/123', 'invalid-session', mockRequest),
+        () => pluginManager.sendCDPCommand(
+          '/devtools/page/123',
+          'invalid-session',
+          mockRequest
+        ),
         Error,
         'Invalid proxy session ID',
       )
@@ -227,8 +227,10 @@ Deno.test({
     })
 
     await t.step('sendCDPCommand - message processing', async () => {
-      const mockPlugin: CDPPlugin = {
-        name: 'test-plugin',
+      const mockRequest: CDPCommandRequest = {
+        id: 1,
+        method: 'Page.navigate',
+        params: { url: 'https://example.com' },
       }
 
       // Create mock WebSocket and wait for it to be ready
@@ -248,18 +250,11 @@ Deno.test({
 
       const mockSession = mockSessionManager.createSession(mockSocket, mockSocket, 'ws://localhost:9222')
 
-      const mockRequest: CDPCommandRequest = {
-        id: 1,
-        method: 'Page.navigate',
-        params: { url: 'https://example.com' },
-      }
-
       // Start the command send and store promise
       const responsePromise = pluginManager.sendCDPCommand(
-        mockPlugin,
         '/devtools/page/123',
         mockSession.id,
-        mockRequest,
+        mockRequest
       )
 
       // Wait for the message to be sent
@@ -301,8 +296,10 @@ Deno.test({
     })
 
     await t.step('sendCDPCommand - should handle timeout', async () => {
-      const mockPlugin: CDPPlugin = {
-        name: 'test-plugin',
+      const mockRequest: CDPCommandRequest = {
+        id: 1,
+        method: 'Page.navigate',
+        params: { url: 'https://example.com' },
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
@@ -311,18 +308,16 @@ Deno.test({
       // Wait for the WebSocket to be open
       await new Promise(resolve => setTimeout(resolve, 100))
 
-      const mockRequest: CDPCommandRequest = {
-        id: 1,
-        method: 'Page.navigate',
-        params: { url: 'https://example.com' },
-      }
-
       // Mock the WebSocket send method but don't send a response
       mockSocket.send = () => {}
 
       // The command should timeout after PLUGIN_COMMAND_TIMEOUT ms
       await assertRejects(
-        () => pluginManager.sendCDPCommand(mockPlugin, '/devtools/page/123', mockSession.id, mockRequest),
+        () => pluginManager.sendCDPCommand(
+          '/devtools/page/123',
+          mockSession.id,
+          mockRequest
+        ),
         Error,
         'CDP command timed out',
       )
@@ -333,8 +328,10 @@ Deno.test({
     })
 
     await t.step('sendCDPCommand - should handle closed WebSocket', async () => {
-      const mockPlugin: CDPPlugin = {
-        name: 'test-plugin',
+      const mockRequest: CDPCommandRequest = {
+        id: 1,
+        method: 'Page.navigate',
+        params: { url: 'https://example.com' },
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
@@ -343,14 +340,12 @@ Deno.test({
       // Close the WebSocket before sending
       mockSocket.close()
 
-      const mockRequest: CDPCommandRequest = {
-        id: 1,
-        method: 'Page.navigate',
-        params: { url: 'https://example.com' },
-      }
-
       await assertRejects(
-        () => pluginManager.sendCDPCommand(mockPlugin, '/devtools/page/123', mockSession.id, mockRequest),
+        () => pluginManager.sendCDPCommand(
+          '/devtools/page/123',
+          mockSession.id,
+          mockRequest
+        ),
         Error,
         'Chrome WebSocket connection is not open',
       )
@@ -359,8 +354,10 @@ Deno.test({
     })
 
     await t.step('sendCDPCommand - should handle CDP error response', async () => {
-      const mockPlugin: CDPPlugin = {
-        name: 'test-plugin',
+      const mockRequest: CDPCommandRequest = {
+        id: 1,
+        method: 'Page.navigate',
+        params: { url: 'https://example.com' },
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
@@ -369,18 +366,11 @@ Deno.test({
       // Wait for the WebSocket to be open
       await new Promise(resolve => setTimeout(resolve, 100))
 
-      const mockRequest: CDPCommandRequest = {
-        id: 1,
-        method: 'Page.navigate',
-        params: { url: 'https://example.com' },
-      }
-
       // Start the command send
       const responsePromise = pluginManager.sendCDPCommand(
-        mockPlugin,
         '/devtools/page/123',
         mockSession.id,
-        mockRequest,
+        mockRequest
       )
 
       // Wait for the message to be sent

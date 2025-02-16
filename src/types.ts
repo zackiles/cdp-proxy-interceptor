@@ -61,18 +61,25 @@ export interface CDPEvent {
 }
 
 export interface CDPPlugin {
-  name: string
-  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>
-  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>
-  onEvent?(event: CDPEvent): Promise<CDPEvent | null>
-
-  // Add these as optional properties that will be injected
+  name: string;
   sendCDPCommand?: (
     endpoint: string,
     proxySessionId: string,
     message: CDPCommandRequest,
-  ) => Promise<CDPCommandResponse>
-  emitClientEvent?: (proxySessionId: string, event: CDPEvent) => Promise<void>
+  ) => Promise<CDPCommandResponse>;
+  emitClientEvent?: (
+    proxySessionId: string,
+    event: CDPEvent,
+  ) => Promise<void>;
+  onRequest?: (
+    request: CDPCommandRequest,
+  ) => Promise<CDPCommandRequest | null>;
+  onResponse?: (
+    response: CDPCommandResponse,
+  ) => Promise<CDPCommandResponse | null>;
+  onEvent?: (event: CDPEvent) => Promise<CDPEvent | null>;
+  cleanup?: () => Promise<void>;
+  _state?: { cleaning?: boolean; cleanupStarted?: number };
 }
 
 export interface SchemaDefinition {

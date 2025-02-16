@@ -1,28 +1,29 @@
 ### **Plugin Interface Specification & Capabilities **
 
-## **1. Lifecycle Hooks**
+## **1. Plugin Structure**
 
-Each plugin must export an **object** implementing the `CDPPlugin` interface with these optional lifecycle interceptors:
+Each plugin must export a class that extends `BaseCDPPlugin`.  The `BaseCDPPlugin` class provides the `sendCDPCommand` and `emitClientEvent` methods, and defines the optional lifecycle interceptor methods.
 
 ```typescript
-interface CDPPlugin {
-  name: string;
-  onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
-  onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
-  onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts';
+import type { CDPCommandRequest, CDPCommandResponse, CDPEvent } from '../src/types.ts';
+
+export default class MyPlugin extends BaseCDPPlugin {
+  name = "MyPlugin";
+
+  override async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null> { /*...*/ }
+
+  override async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null> { /*...*/ }
+
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> { /*...*/ }
+
+  async cleanup() {
+    // Clean up any resources, state, or event listeners
+  }
 }
-
-// Example implementation:
-export default {
-  name: "MyMitmPlugin",
-
-  async onRequest(request: CDPCommandRequest) { /*...*/ },
-
-  async onResponse(response: CDPCommandResponse) { /*...*/ },
-
-  async onEvent(event: CDPEvent) { /*...*/ }
-} as CDPPlugin;
 ```
+
+The `onRequest`, `onResponse`, `onEvent`, and `cleanup` methods must use the `override` keyword.
 
 ### **1.1 `onRequest(request)`**
 - **Intercepts outgoing CDP requests** from Playwright to the browser.
@@ -100,82 +101,97 @@ async onEvent(event) {
 
 ---
 
-## **2. CDP Command Proxying**
+### **1.4 `cleanup()`**
+- **Called when the plugin is being unregistered** or when the proxy is shutting down.
+- **Purpose**:
+  - Clean up any resources, state, or event listeners the plugin has created
+  - Ensure proper memory management and prevent leaks
+  - Handle any necessary async cleanup operations
+- **Return Value**:
+  - Can return `void` for synchronous cleanup
+  - Can return `Promise<void>` for asynchronous cleanup operations
+  - The proxy will await any async cleanup before proceeding
 
-### **2.1 The `sendCDPCommand?(endpoint, proxySessionId, message)` Method**
+##### **Example Usage**
+```js
+async cleanup() {
+  // Clear any maps or sets
+  this.sessionMap.clear();
+  this.eventListeners.clear();
 
-Your plugin can optionally implement the ability to programmatically send additional CDP commands to the browser:
-
-```typescript
-async sendCDPCommand?(
-  endpoint: string,
-  proxySessionId: string, 
-  message: CDPCommandRequest
-): Promise<CDPCommandResponse>;
-```
-
-Where:
-
-- **`endpoint`**: A string that designates the DevTools endpoint to target. Examples:
-  - `"/devtools/page/{targetId}"`  
-  - `"/json/close/{targetId}"`  
-  - `"/json/new?{url}"`  
-- **`proxySessionId`**: A **unique** internal ID that the plugin uses to keep track of this conversation. This is **not** Chrome's actual `sessionId`.  
-- **`message`**: An object describing the CDP command, e.g.:
-  ```js
-  {
-    "id": 42,
-    "method": "Runtime.evaluate",
-    "params": { "expression": "console.log('Hello!')" }
+  // Close any open connections
+  for (const connection of this.connections) {
+    await connection.close();
   }
-  ```
-  If you do not provide an `"id"`, the plugin may auto-generate one.
 
-#### **Why This Matters**
-- You can **manually trigger** DevTools actions (like `Runtime.enable` in an ephemeral session) **without** the client (Playwright) being aware.
-- This is crucial for implementing advanced features such as ephemeral DevTools sessions to hide or mimic certain signals.
+  // Clean up any timers
+  clearInterval(this.cleanupInterval);
+  
+  console.log("Plugin cleanup completed");
+}
+```
 
 ---
 
-## **3. Emitting (Synthetic) Events to the Client**
+## **2. Injected Methods**
 
-### **3.1 The `emitClientEvent?(proxySessionId, event)` Method**
+The following methods are injected into your plugin by the `BaseCDPPlugin` class and are available as `this.methodName`:
 
-Your plugin can optionally implement the ability to emit events back to the client:
+### **2.1 `sendCDPCommand(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>`**
 
 ```typescript
-async emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
-```
-
-Anytime you want to **fake** or **inject** an event back to Playwright, call:
-
-```js
-this.emitClientEvent(proxySessionId, event);
-```
-
-Where:
-
-- **`proxySessionId`**: The same local ID used to correlate events to the correct client session.
-- **`event`**: A JSON object representing a **CDP response** or **CDP event**. Typically includes:
-  - A `"method"` (e.g., `"Runtime.executionContextCreated"`) if it's an event.
-  - An `"id"` field if it's a response to a prior request.
-  - `"params"` that hold any relevant data (e.g., an object describing the new execution context).
-
-#### **Example Usage**
-```js
-await this.emitClientEvent(proxySessionId, {
-  method: "Runtime.executionContextCreated",
-  params: {
-    context: {
-      id: 99,
-      auxData: { isDefault: true, frameId: "12345" }
+this.sendCDPCommand(
+  "/devtools/page/" + frameId,
+  sessionId,
+  {
+    method: "Page.createIsolatedWorld",
+    params: {
+      frameId,
+      worldName: "__MITM_InvisibleWorld_" + frameId,
+      grantUniveralAccess: true
     }
+  }
+);
+```
+
+This method allows plugins to send CDP commands to the browser.  It automatically handles message ID generation, response matching, timeouts, WebSocket state validation, and error handling.
+
+*   **`endpoint`**:  The DevTools endpoint to target (e.g., `"/devtools/page/{targetId}"`).
+*   **`proxySessionId`**:  The unique internal proxy session ID.
+*   **`message`**:  The CDP command request.
+
+### **2.2 `emitClientEvent(proxySessionId: string, event: CDPEvent): Promise<void>`**
+
+This method allows plugins to emit CDP events to the client. This allows plugins to send custom events, simulate browser events, and provide plugin-specific notifications. Note that this method is specifically for events only, not responses.
+
+```typescript
+// Example: Send a custom event when a specific CDP event occurs
+await this.emitClientEvent(sessionId, {
+  method: "Custom.pageLoadComplete",
+  params: {
+    timestamp: Date.now(),
+    metrics: await this.getPageMetrics(sessionId)
   }
 });
 ```
-In doing so, the client sees this as though it came **directly from the browser**.
 
----
+## **3. Return Types**
+
+All plugin methods (`onRequest`, `onResponse`, `onEvent`) return a Promise that resolves to either:
+- The same type as the input (possibly modified)
+- `null` to drop/block the message
+
+For example:
+```typescript
+// Each method returns Promise<T | null> where T is the input type
+async onRequest(request: CDPCommandRequest): Promise<CDPCommandRequest | null>
+async onResponse(response: CDPCommandResponse): Promise<CDPCommandResponse | null>
+async onEvent(event: CDPEvent): Promise<CDPEvent | null>
+```
+
+This means your plugin methods can:
+1. Return a Promise that resolves to the message (modified or unmodified)
+2. Return a Promise that resolves to null to block/drop the message
 
 ## **4. Message Format**
 
@@ -235,14 +251,4 @@ Notably, in this specification:
 - Override or modify certain calls to change how Playwright interacts with the browser (e.g., swapping user agent dynamically, stubbing out certain commands, or merging data from ephemeral sessions into the main session).
 
 ### **Helper Methods**
-The following methods are automatically injected into your plugin by the plugin manager:
-
-#### **`sendCDPCommand(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>`**
-- Allows plugins to send CDP commands to the browser
-- Automatically handles message IDs, timeouts, and response routing
-- Available as `this.sendCDPCommand` in your plugin
-
-#### **`emitClientEvent(proxySessionId: string, event: CDPEvent): Promise<void>`**
-- Allows plugins to emit events back to the client
-- Handles WebSocket routing and session management
-- Available as `this.emitClientEvent` in your plugin
+The `sendCDPCommand` and `emitClientEvent` methods are automatically injected into your plugin by the `BaseCDPPlugin` class. See section 2 for details.
