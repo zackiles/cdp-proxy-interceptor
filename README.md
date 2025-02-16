@@ -4,22 +4,24 @@
 
 ## Overview
 
-The `cdp-proxy-interceptor` is a transparent man-in-the-middle (MITM) proxy for the Chrome DevTools Protocol (CDP). Intercept, modify, inject, and filter messages and events between a CDP-enabled browser and any clients interacting with it such as Playwright or Puppeteer.
+Transparent man-in-the-middle (MITM) proxy for the Chrome DevTools Protocol (CDP). Intercept, modify, inject, and filter messages and events between a CDP-enabled browser and any clients interacting with it such as Playwright or Puppeteer.
 
-The core strength of this proxy lies in its [flexible plugin system](docs/plugin-specification.md), which allows users to write anything from basic intercepts, to advanced plugins that can extend and enhance the capabilities of their CDP client. Some examples of what you could do with a plugin:
+Manipulate and message or event through a a [flexible plugin system](docs/plugin-specification.md), which allows users to write anything from basic intercepts, to advanced plugins that can extend and enhance the capabilities of their CDP client.
+
+### Basic Use Cases
+
+* **Modify CDP requests and responses:**  Change parameters, block requests, or inject custom data.
+* **Extend CDP functionality:**  Add custom behavior not natively supported by the protocol.
+* **Debug automation scripts:**  Gain deep insights into the communication between your automation tool and the browser.
+* **Simulate network conditions:**  Throttle bandwidth, inject latency, or simulate offline states (with appropriate plugins).
+* **Mock CDP responses:**  Test your automation scripts against specific scenarios without relying on a real browser.
+
+### Advanced Use Cases
 
 - **Workload Management:** Intercept your Playwright requests and generate distributed workloads from it that spin up multiple browsers and fan out the work evenly, seamlessly, and transparently to your client code.
 - **Stealth Modifications:** Playwright uses `Runtime.enable` on every page by default which is now freqeuntly detected as automation. Current approaches such as [github.com/rebrowser/rebrowser-patches](https://github.com/rebrowser/rebrowser-patches) rely on brittle code-patches made to Playwright's code directly that attempt to block Playwrights attempts to replace `Runtime.enable` and provide context ids to Playwright a different way that accessing the page. With this proxy, you don't need to patch any code, and can simply write a plugin to overwrite requests to `Runtime.enable`
 - **Advanced Usage:** Raw CDP is a simple payload to work with, often simpler than the abstractions client libraries like Playwright present, but providing full access to the Devtools protocol including experimental features. Getting access to those in Playwright is as simple as writing a simple plugin for this proxy.
 
-
-## Features
-
-*   **Modify CDP requests and responses:**  Change parameters, block requests, or inject custom data.
-*   **Extend CDP functionality:**  Add custom behavior not natively supported by the protocol.
-*   **Debug automation scripts:**  Gain deep insights into the communication between your automation tool and the browser.
-*   **Simulate network conditions:**  Throttle bandwidth, inject latency, or simulate offline states (with appropriate plugins).
-*   **Mock CDP responses:**  Test your automation scripts against specific scenarios without relying on a real browser.
 
 ## Quick Start
 
@@ -31,6 +33,12 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
    git clone git@github.com:zackiles/cdp-proxy-interceptor.git
    cd cdp-proxy-interceptor
    ```
+
+   > **Important:** As of 16/2/2025 This project requires 🦕 Deno version 2.1.4 due to incompatabiliites with Playwright if you need to run the tests. If you only need to run the proxy server then any Deno version 2+ will suffice. If you have a different version installed, you can use [dvm](https://github.com/justjavac/dvm) (Deno Version Manager) to switch to the correct version:
+   > ```bash
+   > dvm install 2.1.4
+   > dvm use 2.1.4
+   > ```
 
 2. **Write Plugins (Or enable examples):**
 
