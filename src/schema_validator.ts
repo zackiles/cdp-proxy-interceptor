@@ -45,10 +45,12 @@ export class SchemaValidator {
   validateCDPRequest = (msg: CDPMessage): boolean => {
     if (!this.enabled) return true
     if (!this.isCommandRequest(msg)) return true // Return true for non-requests when validation is enabled
-    
+
     const schema = this.commandValidators.get(msg.method)
     if (!schema) {
-      console.warn(`[SchemaValidator] No validator found for request: ${msg.method}`)
+      console.warn(
+        `[SchemaValidator] No validator found for request: ${msg.method}`,
+      )
       // Return false for unknown methods that look like CDP methods (contain a dot)
       return !msg.method.includes('.')
     }
@@ -74,7 +76,9 @@ export class SchemaValidator {
     if (this.isEvent(msg)) {
       const schema = this.eventValidators.get(msg.method)
       if (!schema) {
-        console.warn(`[SchemaValidator] No validator found for event: ${msg.method}`)
+        console.warn(
+          `[SchemaValidator] No validator found for event: ${msg.method}`,
+        )
         // Return false for unknown events that look like CDP events (contain a dot)
         return !msg.method.includes('.')
       }
@@ -91,14 +95,14 @@ export class SchemaValidator {
     }
 
     if (!this.isCommandResponse(msg)) return false
-    
+
     // Log response but don't affect validation result
     if (msg.error) {
       console.warn('[SchemaValidator] Response contains error:', msg.error)
     } else {
       console.debug(`[SchemaValidator] Received response for request ${msg.id}`)
     }
-    
+
     return true
   }
 
@@ -115,14 +119,17 @@ export class SchemaValidator {
     'method' in msg && this.eventValidators.has(msg.method as string)
 
   private collectTypeRefs = (domains: unknown[]): void => {
-    domains?.forEach(domain => {
+    domains?.forEach((domain) => {
       const { domain: domainName, types = [] } = domain as {
         domain: string
         types?: unknown[]
       }
 
-      types.forEach(type => {
-        const { id, ...typeSchema } = type as { id: string } & Record<string, unknown>
+      types.forEach((type) => {
+        const { id, ...typeSchema } = type as { id: string } & Record<
+          string,
+          unknown
+        >
         this.schemaRefs.set(
           `${domainName}.${id}`,
           this.convertTypeToSchema(typeSchema),
@@ -135,14 +142,14 @@ export class SchemaValidator {
     this.schemaRefs.get(ref) ?? { type: 'object', additionalProperties: true }
 
   private compileValidators = (domains: unknown[]): void => {
-    domains?.forEach(domain => {
+    domains?.forEach((domain) => {
       const {
         domain: domainName,
         commands = [],
         events = [],
       } = domain as { domain: string; commands?: unknown[]; events?: unknown[] }
 
-      commands.forEach(cmd => {
+      commands.forEach((cmd) => {
         const { name, parameters = [] } = cmd as {
           name: string
           parameters?: unknown[]
@@ -153,7 +160,7 @@ export class SchemaValidator {
         )
       })
 
-      events.forEach(evt => {
+      events.forEach((evt) => {
         const { name, parameters = [] } = evt as {
           name: string
           parameters?: unknown[]
@@ -263,25 +270,30 @@ export class SchemaValidator {
     return typeChecks[expectedType]?.(data) ?? false
   }
 
-  private validateAgainstSchema = (data: unknown, schema: SchemaDefinition): void => {
+  private validateAgainstSchema = (
+    data: unknown,
+    schema: SchemaDefinition,
+  ): void => {
     if (schema.type === 'object') {
       if (typeof data !== 'object' || data === null) {
         throw new Error(`Expected object, got ${typeof data}`)
       }
 
-      schema.required?.forEach(required => {
+      schema.required?.forEach((required) => {
         if (!(required in data)) {
           throw new Error(`Missing required property: ${required}`)
         }
       })
 
       if (schema.properties) {
-        Object.entries(data as Record<string, unknown>).forEach(([key, value]) => {
-          const propertySchema = schema.properties?.[key]
-          if (propertySchema) {
-            this.validateAgainstSchema(value, propertySchema)
-          }
-        })
+        Object.entries(data as Record<string, unknown>).forEach(
+          ([key, value]) => {
+            const propertySchema = schema.properties?.[key]
+            if (propertySchema) {
+              this.validateAgainstSchema(value, propertySchema)
+            }
+          },
+        )
       }
     } else if (schema.type === 'array') {
       if (!Array.isArray(data)) {
@@ -289,7 +301,7 @@ export class SchemaValidator {
       }
 
       if (schema.items) {
-        data.forEach(item => this.validateAgainstSchema(item, schema.items!))
+        data.forEach((item) => this.validateAgainstSchema(item, schema.items!))
       }
     } else {
       const typeMap: Record<string, string> = {

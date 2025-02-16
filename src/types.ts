@@ -44,17 +44,20 @@ export interface CDPCommandRequest {
   id: number
   method: string
   params?: Record<string, unknown>
+  sessionId?: string
 }
 
 export interface CDPCommandResponse {
   id: number
   result?: Record<string, unknown>
   error?: CDPError
+  sessionId?: string
 }
 
 export interface CDPEvent {
   method: string
   params?: Record<string, unknown>
+  sessionId?: string
 }
 
 export interface CDPPlugin {
@@ -62,12 +65,14 @@ export interface CDPPlugin {
   onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>
   onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>
   onEvent?(event: CDPEvent): Promise<CDPEvent | null>
-  sendCDPCommand?(
+
+  // Add these as optional properties that will be injected
+  sendCDPCommand?: (
     endpoint: string,
     proxySessionId: string,
-    message: CDPCommandRequest
-  ): Promise<CDPCommandResponse>
-  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>
+    message: CDPCommandRequest,
+  ) => Promise<CDPCommandResponse>
+  emitClientEvent?: (proxySessionId: string, event: CDPEvent) => Promise<void>
 }
 
 export interface SchemaDefinition {

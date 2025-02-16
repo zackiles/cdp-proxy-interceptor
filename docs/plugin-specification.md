@@ -10,8 +10,6 @@ interface CDPPlugin {
   onRequest?(request: CDPCommandRequest): Promise<CDPCommandRequest | null>;
   onResponse?(response: CDPCommandResponse): Promise<CDPCommandResponse | null>;
   onEvent?(event: CDPEvent): Promise<CDPEvent | null>;
-  sendCDPCommand?(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>;
-  emitClientEvent?(proxySessionId: string, event: CDPEvent): Promise<void>;
 }
 
 // Example implementation:
@@ -235,3 +233,16 @@ Notably, in this specification:
 
 **D. Feature Modification**  
 - Override or modify certain calls to change how Playwright interacts with the browser (e.g., swapping user agent dynamically, stubbing out certain commands, or merging data from ephemeral sessions into the main session).
+
+### **Helper Methods**
+The following methods are automatically injected into your plugin by the plugin manager:
+
+#### **`sendCDPCommand(endpoint: string, proxySessionId: string, message: CDPCommandRequest): Promise<CDPCommandResponse>`**
+- Allows plugins to send CDP commands to the browser
+- Automatically handles message IDs, timeouts, and response routing
+- Available as `this.sendCDPCommand` in your plugin
+
+#### **`emitClientEvent(proxySessionId: string, event: CDPEvent): Promise<void>`**
+- Allows plugins to emit events back to the client
+- Handles WebSocket routing and session management
+- Available as `this.emitClientEvent` in your plugin

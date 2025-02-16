@@ -1,11 +1,13 @@
 import { launch, type LaunchedChrome } from 'npm:chrome-launcher'
-import { getAvailablePort} from 'jsr:@std/net'
-import { doesProcessWithPortExist, getChromiumPaths, getBrowserNameFromPath } from './utils.ts'
+import { getAvailablePort } from 'jsr:@std/net'
+import {
+  doesProcessWithPortExist,
+  getChromiumPaths,
+  getBrowserNameFromPath,
+} from './utils.ts'
 import { CDPErrorType, type ChromiumPaths } from './types.ts'
-import { ErrorHandler } from './error_handler.ts'
-import { CHROME_FLAGS } from './constants.ts'
-
-const DEFAULT_RETRY_CONFIG = { retries: 3, baseDelay: 500 }
+import type { ErrorHandler } from './error_handler.ts'
+import { CHROME_FLAGS, CHROME_STARTUP_CONFIG } from './constants.ts'
 
 interface ExtendedChrome extends LaunchedChrome {
   destroyTmp?: () => Promise<void>
@@ -35,15 +37,19 @@ export class ChromeManager {
     this.chromiumPaths = getChromiumPaths()
     this.browserName = getBrowserNameFromPath(this.chromiumPaths.executablePath)
   }
-  
+
   /**
    * Starts a Chrome instance with retry logic
    * @param retries Number of retry attempts
    * @param baseDelay Base delay between retries in ms
    * @returns WebSocket URL for Chrome DevTools Protocol
    */
-  async start(retries = DEFAULT_RETRY_CONFIG.retries, baseDelay = DEFAULT_RETRY_CONFIG.baseDelay): Promise<string> {
-    if (this.isStarting) throw new Error(`${this.browserName} is already starting`)
+  async start(
+    retries = CHROME_STARTUP_CONFIG.RETRY_ATTEMPTS,
+    baseDelay = CHROME_STARTUP_CONFIG.BASE_RETRY_DELAY_MS,
+  ): Promise<string> {
+    if (this.isStarting)
+      throw new Error(`${this.browserName} is already starting`)
     this.isStarting = true
 
     try {
@@ -51,35 +57,44 @@ export class ChromeManager {
         try {
           this.port = await getAvailablePort()
           await this.killExistingChromeOnPort()
-          
+
           this.chrome = await launch({
             chromePath: this.chromiumPaths.executablePath,
             port: this.port,
-            chromeFlags: [...CHROME_FLAGS, `--remote-debugging-port=${this.port}`],
-            handleSIGINT: true
+            chromeFlags: [
+              ...CHROME_FLAGS,
+              `--remote-debugging-port=${this.port}`,
+            ],
+            handleSIGINT: true,
           })
 
           if (!this.chrome?.pid) {
             await this.forceCleanup()
-            throw new Error(`Failed to start ${this.browserName}!`) 
+            throw new Error(`Failed to start ${this.browserName}!`)
           }
 
-          if (!await doesProcessWithPortExist(this.port)) {
+          if (!(await doesProcessWithPortExist(this.port))) {
             await this.forceCleanup()
-            throw new Error(`Failed to find a process for ${this.browserName} with an open port of ${this.port}!`)
+            throw new Error(
+              `Failed to find a process for ${this.browserName} with an open port of ${this.port}!`,
+            )
           }
 
           await this.waitForDebuggerEndpoint(this.port, baseDelay * 2 ** i)
           this.wsUrl = await this.getWebSocketUrl()
-          console.log(`${this.browserName} started with PID: ${this.chrome.pid} on port ${this.port}`)
+          console.log(
+            `${this.browserName} started with PID: ${this.chrome.pid} on port ${this.port}`,
+          )
           return this.wsUrl
         } catch (e) {
           await this.forceCleanup()
           if (i === retries - 1) throw e
-          await new Promise(r => setTimeout(r, baseDelay * 2 ** i))
+          await new Promise((r) => setTimeout(r, baseDelay * 2 ** i))
         }
       }
-      throw new Error(`Failed to start ${this.browserName} after ${retries} retries`)
+      throw new Error(
+        `Failed to start ${this.browserName} after ${retries} retries`,
+      )
     } finally {
       this.isStarting = false
     }
@@ -99,26 +114,38 @@ export class ChromeManager {
 
     const response = data as Record<string, unknown>
     if (typeof response.webSocketDebuggerUrl !== 'string') {
-      console.debug('Invalid debugger response: missing or invalid webSocketDebuggerUrl', response)
+      console.debug(
+        'Invalid debugger response: missing or invalid webSocketDebuggerUrl',
+        response,
+      )
       return false
     }
 
     const wsUrl = response.webSocketDebuggerUrl as string
     if (!wsUrl.includes(`localhost:${port}/devtools/browser/`)) {
-      console.debug('Invalid debugger response: incorrect WebSocket URL format', wsUrl)
+      console.debug(
+        'Invalid debugger response: incorrect WebSocket URL format',
+        wsUrl,
+      )
       return false
     }
 
     // Optional fields validation
     const optionalFields = [
-      'Browser', 'Protocol-Version', 'User-Agent', 
-      'V8-Version', 'WebKit-Version'
+      'Browser',
+      'Protocol-Version',
+      'User-Agent',
+      'V8-Version',
+      'WebKit-Version',
     ]
-    const missingFields = optionalFields.filter(field => 
-      typeof response[field] !== 'string'
+    const missingFields = optionalFields.filter(
+      (field) => typeof response[field] !== 'string',
     )
     if (missingFields.length > 0) {
-      console.debug('Warning: debugger response missing optional fields:', missingFields)
+      console.debug(
+        'Warning: debugger response missing optional fields:',
+        missingFields,
+      )
     }
 
     return true
@@ -143,12 +170,14 @@ export class ChromeManager {
    * @param connection WebSocket to close
    * @returns Promise that resolves when connection is closed
    */
-  private async closeConnectionWithTimeout(connection: WebSocket): Promise<void> {
-    return new Promise<void>(resolve => {
+  private async closeConnectionWithTimeout(
+    connection: WebSocket,
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
         console.warn('Connection close timed out')
         resolve()
-      }, 2000)
+      }, CHROME_STARTUP_CONFIG.CONNECTION_CLOSE_TIMEOUT_MS)
 
       connection.addEventListener('close', () => {
         clearTimeout(timeout)
@@ -167,27 +196,61 @@ export class ChromeManager {
 
   private async killExistingChromeOnPort(): Promise<void> {
     if (!this.port) return
-    
+
     const exists = await this.checkExistingChrome()
     if (!exists) return
-    
+
     console.log(`Found existing ${this.browserName} instance, killing it...`)
     await this.killProcessByPort()
-    await new Promise(r => setTimeout(r, 1000))
+    await new Promise((r) => setTimeout(r, 1000))
   }
 
   private async killProcessByPort(): Promise<void> {
     if (!this.port) return
 
-    const cmdConfig = Deno.build.os === 'windows' 
-      ? { cmd: 'taskkill', args: ['//F', '//IM', 'chrome.exe'] }
-      : { cmd: 'pkill', args: ['-f', `(chrome|chromium).*--remote-debugging-port=${this.port}`] }
-    
-    try {
-      await new Deno.Command(cmdConfig.cmd, { args: cmdConfig.args }).output()
-    } catch (error) {
-      !(error instanceof Deno.errors.NotFound) && 
-        console.warn('Error killing browser process:', error)
+    if (Deno.build.os === 'windows') {
+      try {
+        // First try to kill by port
+        const netstatCmd = new Deno.Command('netstat', { args: ['-ano'] })
+        const output = await netstatCmd.output()
+        const outputText = new TextDecoder().decode(output.stdout)
+        const lines = outputText.split('\n')
+
+        for (const line of lines) {
+          if (line.includes(`:${this.port}`)) {
+            const pid = line.trim().split(/\s+/).pop()
+            if (pid) {
+              try {
+                await new Deno.Command('taskkill', {
+                  args: ['/F', '/PID', pid],
+                }).output()
+              } catch (e) {
+                console.debug(`Failed to kill PID ${pid}:`, e)
+              }
+            }
+          }
+        }
+
+        // Then try to kill all Chrome instances as backup
+        await new Deno.Command('taskkill', {
+          args: ['/F', '/IM', 'chrome.exe'],
+        }).output()
+      } catch (error) {
+        !(error instanceof Deno.errors.NotFound) &&
+          console.warn('Error killing browser process:', error)
+      }
+    } else {
+      try {
+        await new Deno.Command('pkill', {
+          args: [
+            '-f',
+            `(chrome|chromium).*--remote-debugging-port=${this.port}`,
+          ],
+        }).output()
+      } catch (error) {
+        !(error instanceof Deno.errors.NotFound) &&
+          console.warn('Error killing browser process:', error)
+      }
     }
   }
 
@@ -197,7 +260,7 @@ export class ChromeManager {
       await this.killProcessByPort()
       await this.closeAllConnections()
       await this.cleanupTempFiles()
-      
+
       this.resetState()
     } catch (error) {
       console.error('Error during force cleanup:', error)
@@ -206,10 +269,10 @@ export class ChromeManager {
 
   private async killChromeProcess(): Promise<void> {
     if (!this.chrome?.pid) return
-    
+
     try {
       Deno.kill(this.chrome.pid, 'SIGKILL')
-      await new Promise(r => setTimeout(r, 1000))
+      await new Promise((r) => setTimeout(r, 1000))
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) {
         console.warn('Error force killing browser process:', error)
@@ -232,9 +295,9 @@ export class ChromeManager {
     const extendedChrome = this.chrome as ExtendedChrome
     if (extendedChrome?.destroyTmp) {
       await this.retryOperation(
-        () => extendedChrome.destroyTmp!(),
+        () => (extendedChrome.destroyTmp as () => Promise<void>)(),
         3,
-        (error) => (error as BusyError)?.code === 'EBUSY'
+        (error) => (error as BusyError)?.code === 'EBUSY',
       )
     }
   }
@@ -248,7 +311,7 @@ export class ChromeManager {
   private async retryOperation(
     operation: () => Promise<void>,
     maxRetries: number,
-    shouldRetry: (error: unknown) => boolean
+    shouldRetry: (error: unknown) => boolean,
   ): Promise<void> {
     for (let i = 0; i < maxRetries; i++) {
       try {
@@ -256,25 +319,33 @@ export class ChromeManager {
         return
       } catch (error) {
         if (i === maxRetries - 1 || !shouldRetry(error)) throw error
-        await new Promise(r => setTimeout(r, 1000 * (i + 1)))
+        await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
       }
     }
   }
 
-  private async waitForDebuggerEndpoint(port: number, timeout: number): Promise<void> {
+  private async waitForDebuggerEndpoint(
+    port: number,
+    timeout: number,
+  ): Promise<void> {
     const start = Date.now()
-    const minTimeout = 5000 // Increased minimum timeout to 5 seconds
-    const actualTimeout = Math.max(timeout, minTimeout)
-    const retryInterval = 500 // Increased retry interval to 500ms
+    const actualTimeout = Math.max(
+      timeout,
+      CHROME_STARTUP_CONFIG.MIN_DEBUGGER_TIMEOUT_MS,
+    )
 
     while (Date.now() - start < actualTimeout) {
       try {
-        console.debug(`Attempting to connect to debugger endpoint at http://localhost:${port}/json/version`)
+        console.debug(
+          `Attempting to connect to debugger endpoint at http://localhost:${port}/json/version`,
+        )
         const response = await fetch(`http://localhost:${port}/json/version`)
-        
+
         if (!response.ok) {
           console.debug(`Debugger endpoint returned status ${response.status}`)
-          await new Promise(r => setTimeout(r, retryInterval))
+          await new Promise((r) =>
+            setTimeout(r, CHROME_STARTUP_CONFIG.DEBUGGER_POLL_INTERVAL_MS),
+          )
           continue
         }
 
@@ -283,15 +354,21 @@ export class ChromeManager {
           console.debug('Successfully connected to debugger endpoint')
           return
         }
-        
+
         console.warn('CDP endpoint response validation failed:', data)
-        await new Promise(r => setTimeout(r, retryInterval))
+        await new Promise((r) =>
+          setTimeout(r, CHROME_STARTUP_CONFIG.DEBUGGER_POLL_INTERVAL_MS),
+        )
       } catch (error) {
         console.debug('Error connecting to CDP endpoint:', error)
-        await new Promise(r => setTimeout(r, retryInterval))
+        await new Promise((r) =>
+          setTimeout(r, CHROME_STARTUP_CONFIG.DEBUGGER_POLL_INTERVAL_MS),
+        )
       }
     }
-    throw new Error(`Debugger endpoint not ready after ${actualTimeout}ms. Please check if ${this.browserName} is running and accessible.`)
+    throw new Error(
+      `Debugger endpoint not ready after ${actualTimeout}ms. Please check if ${this.browserName} is running and accessible.`,
+    )
   }
 
   /**
@@ -317,11 +394,11 @@ export class ChromeManager {
     try {
       if (this.chrome) {
         await Promise.all(
-          Array.from(this.connections).map(connection => 
-            this.closeConnectionWithTimeout(connection)
-          )
+          Array.from(this.connections).map((connection) =>
+            this.closeConnectionWithTimeout(connection),
+          ),
         )
-        
+
         this.connections.clear()
         await this.killWithRetries()
       }
@@ -332,22 +409,22 @@ export class ChromeManager {
   }
 
   private async killWithRetries(
-    retries = DEFAULT_RETRY_CONFIG.retries,
-    baseDelay = DEFAULT_RETRY_CONFIG.baseDelay
+    retries = CHROME_STARTUP_CONFIG.RETRY_ATTEMPTS,
+    baseDelay = CHROME_STARTUP_CONFIG.BASE_RETRY_DELAY_MS,
   ): Promise<void> {
     for (let i = 0; i < retries; i++) {
       try {
         if (!this.chrome) return
         await this.chrome.kill()
-        await new Promise(r => setTimeout(r, baseDelay * 2 ** i))
-        
+        await new Promise((r) => setTimeout(r, baseDelay * 2 ** i))
+
         const extendedChrome = this.chrome as ExtendedChrome
         if (extendedChrome.destroyTmp) {
           try {
             await extendedChrome.destroyTmp()
           } catch (error) {
             if ((error as BusyError)?.code === 'EBUSY') {
-              await new Promise(r => setTimeout(r, 1000))
+              await new Promise((r) => setTimeout(r, 1000))
               await this.forceCleanup()
             } else {
               throw error
@@ -366,11 +443,11 @@ export class ChromeManager {
             code: 5001,
             message: `Failed to kill ${this.browserName} after ${retries} attempts`,
             recoverable: false,
-            details: { error, attempts: retries }
+            details: { error, attempts: retries },
           })
           return
         }
-        await new Promise(r => setTimeout(r, baseDelay * 2 ** i))
+        await new Promise((r) => setTimeout(r, baseDelay * 2 ** i))
       }
     }
   }

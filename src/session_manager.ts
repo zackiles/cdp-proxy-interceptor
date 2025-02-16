@@ -4,7 +4,7 @@ import { CDPErrorType } from './types.ts'
 
 const ERROR_CODES = {
   SESSION_NOT_FOUND: 4001,
-  CLEANUP_FAILED: 1001
+  CLEANUP_FAILED: 1001,
 } as const
 
 /**
@@ -32,7 +32,7 @@ export class SessionManager {
     clientSocket: WebSocket,
     chromeSocket: WebSocket,
     chromeWsUrl: string,
-    sessionId = crypto.randomUUID()
+    sessionId = crypto.randomUUID(),
   ): Session {
     const session: Session = {
       id: sessionId,
@@ -99,7 +99,7 @@ export class SessionManager {
    * @returns Array of active sessions
    */
   getActiveSessions(): Session[] {
-    return Array.from(this.sessions.values()).filter(s => s.active)
+    return Array.from(this.sessions.values()).filter((s) => s.active)
   }
 
   /**
@@ -123,7 +123,7 @@ export class SessionManager {
     }>
   } {
     const sessions = Array.from(this.sessions.values())
-    const stats = sessions.map(session => ({
+    const stats = sessions.map((session) => ({
       id: session.id,
       active: session.active,
       createdAt: session.createdAt,
@@ -133,7 +133,7 @@ export class SessionManager {
 
     return {
       total: this.totalSessionsCreated,
-      active: sessions.filter(s => s.active).length,
+      active: sessions.filter((s) => s.active).length,
       sessions: stats,
     }
   }
@@ -143,7 +143,7 @@ export class SessionManager {
    */
   cleanup(): void {
     const activeSessions = this.getActiveSessions()
-    
+
     for (const session of activeSessions) {
       try {
         this.closeWebSockets(session)

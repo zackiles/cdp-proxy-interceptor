@@ -47,14 +47,20 @@ export const BROWSER_OS_CONFIGS = {
 } as const
 
 export const CDP_SCHEMA_URLS = {
-  BROWSER_PROTOCOL: 'https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json',
-  JS_PROTOCOL: 'https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/js_protocol.json',
+  BROWSER_PROTOCOL:
+    'https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json',
+  JS_PROTOCOL:
+    'https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/js_protocol.json',
 } as const
 
 export const CHROMIUM_DATA_STORAGE_URL =
   'https://commondatastorage.googleapis.com/chromium-browser-snapshots' as const
 
-export const CDP_WEBSOCKET_PATHS = ['/devtools/browser', '/devtools/page', '/devtools/inspector'] as const
+export const CDP_WEBSOCKET_PATHS = [
+  '/devtools/browser',
+  '/devtools/page',
+  '/devtools/inspector',
+] as const
 
 export const CHROME_FLAGS = [
   '--headless=new',
@@ -70,7 +76,7 @@ export const CHROME_FLAGS = [
   '--disable-extensions',
   '--disable-sync',
   '--enable-automation',
-  '--password-store=basic'
+  '--password-store=basic',
 ] as const
 
 export const WEBSOCKET_MANAGER = {
@@ -78,4 +84,13 @@ export const WEBSOCKET_MANAGER = {
   HEARTBEAT_INTERVAL: 30000,
   CLEANUP_TIMEOUT: 100,
   LOG_STYLE: 'color: rgb(50, 205, 50); font-weight: bold;',
+} as const
+
+export const CHROME_STARTUP_CONFIG = {
+  RETRY_ATTEMPTS: 3,
+  BASE_RETRY_DELAY_MS: 2000,
+  MIN_DEBUGGER_TIMEOUT_MS: 15000,
+  DEBUGGER_POLL_INTERVAL_MS: 500,
+  PROCESS_KILL_WAIT_MS: 1000,
+  CONNECTION_CLOSE_TIMEOUT_MS: 2000,
 } as const
