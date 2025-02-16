@@ -30,6 +30,7 @@ interface CDPIsolatedWorldResponse extends CDPCommandResponse {
   }
 }
 
+// NOTE: See RFC for this plugin in docs/playwright-stealth-plugin.md
 export class RuntimeEnableMitMPlugin implements CDPPlugin {
   name = 'RuntimeEnableMitMPlugin'
 
@@ -107,7 +108,7 @@ export class RuntimeEnableMitMPlugin implements CDPPlugin {
       if (!this.frameContexts.has(frameId)) {
         const contextId = await this.createIsolatedContext(sessionId, frameId)
         // store the mapping
-        this.frameContexts.set(frameId, contextId)
+        this.frameContexts.set(frameId, contextId as number)
 
         // 3. Emit a synthetic Runtime.executionContextCreated event
         // so Playwright believes that a normal main-world context was created:
@@ -151,7 +152,7 @@ export class RuntimeEnableMitMPlugin implements CDPPlugin {
 
       if (!this.frameContexts.has(frameId)) {
         const contextId = await this.createIsolatedContext(sessionId, frameId)
-        this.frameContexts.set(frameId, contextId)
+        this.frameContexts.set(frameId, contextId as number)
 
         const fakeContextCreated = {
           method: 'Runtime.executionContextCreated',
@@ -185,11 +186,11 @@ export class RuntimeEnableMitMPlugin implements CDPPlugin {
       throw new Error('sendCDPCommand not available')
     }
 
-    const result = await this.sendCDPCommand<CDPIsolatedWorldResponse>(
+    const result = (await this.sendCDPCommand(
       `/devtools/page/${frameId}`,
       sessionId,
       {
-        id: Date.now(), // Add an ID for the request
+        id: Date.now(),
         method: 'Page.createIsolatedWorld',
         params: {
           frameId,
@@ -197,7 +198,7 @@ export class RuntimeEnableMitMPlugin implements CDPPlugin {
           grantUniveralAccess: true,
         },
       },
-    )
+    )) as CDPIsolatedWorldResponse
     return result.result.executionContextId
   }
 }
