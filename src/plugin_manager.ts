@@ -199,21 +199,31 @@ export class PluginManager {
 
   clearPlugins = async (): Promise<void> => {
     const cleanupPromises: Promise<void>[] = []
+    const timeouts: number[] = []
     
     for (const plugin of this.plugins) {
-      if (!('cleanup' in plugin) || typeof plugin.cleanup !== 'function') continue
+      const cleanup = plugin.cleanup
+      if (typeof cleanup !== 'function') continue
 
       try {
         plugin._state = { cleaning: true, cleanupStarted: Date.now() }
         
-        const cleanupPromise = Promise.race([
-          plugin.cleanup(),
-          new Promise<void>((_, reject) => 
-            setTimeout(() => reject(new Error(
+        const cleanupPromise = new Promise<void>((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            reject(new Error(
               `Plugin ${plugin.name} cleanup timed out after ${PluginManager.CLEANUP_TIMEOUT}ms`
-            )), PluginManager.CLEANUP_TIMEOUT)
-          )
-        ]).catch(error => {
+            ))
+          }, PluginManager.CLEANUP_TIMEOUT)
+          timeouts.push(timeoutId)
+
+          Promise.resolve(cleanup.bind(plugin)())
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+              clearTimeout(timeoutId)
+              plugin._state = undefined
+            })
+        }).catch(error => {
           this.handlePluginError(plugin, 'cleanup', error)
           plugin._state = undefined
         })
@@ -225,8 +235,13 @@ export class PluginManager {
       }
     }
 
-    cleanupPromises.length && await Promise.all(cleanupPromises)
-    this.plugins.length = 0
+    try {
+      cleanupPromises.length && await Promise.all(cleanupPromises)
+    } finally {
+      // Clean up any remaining timeouts
+      timeouts.forEach(clearTimeout)
+      this.plugins.length = 0
+    }
   }
 
   /**
@@ -272,6 +287,27 @@ export class PluginManager {
           reject,
           timeoutId,
         })
+
+        // Set up message handler for this request
+        const messageHandler = (event: MessageEvent) => {
+          try {
+            const response = JSON.parse(event.data) as CDPCommandResponse
+            if ('id' in response && response.id === pluginMessageId) {
+              // Clean up
+              chromeSocket.removeEventListener('message', messageHandler)
+              const pendingRequest = this.pluginRequestIdMap.get(pluginMessageId)
+              if (pendingRequest) {
+                clearTimeout(pendingRequest.timeoutId)
+                this.pluginRequestIdMap.delete(pluginMessageId)
+                resolve(response)
+              }
+            }
+          } catch (error) {
+            // Ignore parsing errors for other messages
+          }
+        }
+
+        chromeSocket.addEventListener('message', messageHandler)
 
         // Send the message
         chromeSocket.send(JSON.stringify(message))

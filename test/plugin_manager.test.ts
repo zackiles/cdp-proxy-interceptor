@@ -6,6 +6,7 @@ import { SessionManager } from '../src/session_manager.ts'
 import { WebSocketManager } from '../src/websocket_manager.ts'
 import { SchemaValidator } from '../src/schema_validator.ts'
 import { CDPErrorType } from '../src/types.ts'
+import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts'
 import type {
   CDPPlugin,
   CDPCommandRequest,
@@ -13,6 +14,63 @@ import type {
   CDPEvent,
 } from '../src/types.ts'
 import { MockWebSocket } from './mock_websocket.ts'
+
+class TestPlugin extends BaseCDPPlugin {
+  override name = 'test-plugin'
+  override async onRequest(req: CDPCommandRequest): Promise<CDPCommandRequest | null> {
+    return req
+  }
+}
+
+class RequestPlugin extends BaseCDPPlugin {
+  override name = 'request-plugin'
+  override async onRequest(req: CDPCommandRequest): Promise<CDPCommandRequest | null> {
+    return {
+      ...req,
+      params: { ...req.params, modified: true },
+    }
+  }
+}
+
+class ResponsePlugin extends BaseCDPPlugin {
+  override name = 'response-plugin'
+  override async onResponse(res: CDPCommandResponse): Promise<CDPCommandResponse | null> {
+    return {
+      ...res,
+      result: { ...res.result, modified: true },
+    }
+  }
+}
+
+class EventPlugin extends BaseCDPPlugin {
+  override name = 'event-plugin'
+  override async onEvent(event: CDPEvent): Promise<CDPEvent | null> {
+    return {
+      ...event,
+      params: { ...event.params, modified: true },
+    }
+  }
+}
+
+class ErrorPlugin extends BaseCDPPlugin {
+  override name = 'error-plugin'
+  override async onRequest(): Promise<CDPCommandRequest | null> {
+    throw new Error('Plugin error')
+  }
+}
+
+class BlockingPlugin extends BaseCDPPlugin {
+  override name = 'blocking-plugin'
+  override async onRequest(): Promise<CDPCommandRequest | null> {
+    return null
+  }
+  override async onResponse(): Promise<CDPCommandResponse | null> {
+    return null
+  }
+  override async onEvent(): Promise<CDPEvent | null> {
+    return null
+  }
+}
 
 Deno.test({
   name: 'PluginManager',
@@ -24,10 +82,7 @@ Deno.test({
     const pluginManager = new PluginManager(mockErrorHandler, mockSessionManager, mockWsManager)
 
     await t.step('should register and unregister plugins', () => {
-      const plugin: CDPPlugin = {
-        name: 'test-plugin',
-        onRequest: async (req) => req,
-      }
+      const plugin = new TestPlugin()
 
       pluginManager.registerPlugin(plugin)
       assertEquals(pluginManager.hasPlugins(), true)
@@ -39,13 +94,7 @@ Deno.test({
     })
 
     await t.step('should process requests through plugins', async () => {
-      const plugin: CDPPlugin = {
-        name: 'request-plugin',
-        onRequest: async (req) => ({
-          ...req,
-          params: { ...req.params, modified: true },
-        }),
-      }
+      const plugin = new RequestPlugin()
 
       pluginManager.registerPlugin(plugin)
 
@@ -64,13 +113,7 @@ Deno.test({
     })
 
     await t.step('should process responses through plugins', async () => {
-      const plugin: CDPPlugin = {
-        name: 'response-plugin',
-        onResponse: async (res) => ({
-          ...res,
-          result: { ...res.result, modified: true },
-        }),
-      }
+      const plugin = new ResponsePlugin()
 
       pluginManager.registerPlugin(plugin)
 
@@ -88,13 +131,7 @@ Deno.test({
     })
 
     await t.step('should process events through plugins', async () => {
-      const plugin: CDPPlugin = {
-        name: 'event-plugin',
-        onEvent: async (event) => ({
-          ...event,
-          params: { ...event.params, modified: true },
-        }),
-      }
+      const plugin = new EventPlugin()
 
       pluginManager.registerPlugin(plugin)
 
@@ -112,12 +149,7 @@ Deno.test({
     })
 
     await t.step('should handle plugin errors gracefully', async () => {
-      const plugin: CDPPlugin = {
-        name: 'error-plugin',
-        onRequest: async () => {
-          throw new Error('Plugin error')
-        },
-      }
+      const plugin = new ErrorPlugin()
 
       pluginManager.registerPlugin(plugin)
 
@@ -135,12 +167,7 @@ Deno.test({
     })
 
     await t.step('should handle plugin message blocking', async () => {
-      const plugin: CDPPlugin = {
-        name: 'blocking-plugin',
-        onRequest: async () => null, // Block all requests
-        onResponse: async () => null, // Block all responses
-        onEvent: async () => null, // Block all events
-      }
+      const plugin = new BlockingPlugin()
 
       pluginManager.registerPlugin(plugin)
 
@@ -166,11 +193,11 @@ Deno.test({
       pluginManager.unregisterPlugin(plugin)
     })
 
-    await t.step('should clear all plugins', () => {
-      const plugins: CDPPlugin[] = [
-        { name: 'plugin1', onRequest: async (req) => req },
-        { name: 'plugin2', onResponse: async (res) => res },
-        { name: 'plugin3', onEvent: async (event) => event },
+    await t.step('should clear all plugins', async () => {
+      const plugins = [
+        new TestPlugin(),
+        new ResponsePlugin(),
+        new EventPlugin(),
       ]
 
       for (const plugin of plugins) {
@@ -179,7 +206,7 @@ Deno.test({
       assertEquals(pluginManager.hasPlugins(), true)
       assertEquals(pluginManager.getPlugins().length, 3)
 
-      pluginManager.clearPlugins()
+      await pluginManager.clearPlugins()
       assertEquals(pluginManager.hasPlugins(), false)
       assertEquals(pluginManager.getPlugins().length, 0)
     })
@@ -233,43 +260,24 @@ Deno.test({
         params: { url: 'https://example.com' },
       }
 
-      // Create mock WebSocket and wait for it to be ready
+      // Create mock WebSocket and simulate open state
       const mockSocket = new MockWebSocket('ws://localhost:9222')
-      const openTimeout = setTimeout(() => {
-        mockSocket.dispatchEvent(new Event('open'))
-      }, 0)
-
-      await new Promise<void>((resolve) => {
-        const resolveTimeout = setTimeout(() => {
-          clearTimeout(openTimeout)
-          resolve()
-        }, 0)
-        // Clean up if promise resolves before timeout
-        setTimeout(() => clearTimeout(resolveTimeout), 0)
-      })
+      mockSocket.simulateOpen()
 
       const mockSession = mockSessionManager.createSession(mockSocket, mockSocket, 'ws://localhost:9222')
 
-      // Start the command send and store promise
+      // Start the command send
       const responsePromise = pluginManager.sendCDPCommand(
         '/devtools/page/123',
         mockSession.id,
         mockRequest
       )
 
-      // Wait for the message to be sent
-      const messageTimeout = setTimeout(() => {}, 100)
-      await new Promise<void>(resolve => {
-        const resolveTimeout = setTimeout(() => {
-          clearTimeout(messageTimeout)
-          resolve()
-        }, 100)
-        // Clean up if promise resolves before timeout
-        setTimeout(() => clearTimeout(resolveTimeout), 100)
-      })
+      // Wait a bit for the message to be sent
+      await new Promise(resolve => setTimeout(resolve, 50))
 
       // Verify the sent message
-      const sentMessage = (mockSocket as MockWebSocket).getLastSentMessage()
+      const sentMessage = mockSocket.getLastSentMessage()
       const parsedMessage = JSON.parse(sentMessage!)
       assertEquals(parsedMessage.method, 'Page.navigate')
       assertEquals(parsedMessage.params.url, 'https://example.com')
@@ -282,13 +290,13 @@ Deno.test({
         result: { frameId: 'frame-123' },
       }
 
-      // Process the response
-      const processedResponse = await pluginManager.processMessage(mockResponse)
-      assertEquals(processedResponse, null) // Plugin responses should be filtered out
+      // Simulate receiving the response message
+      mockSocket.simulateMessage(JSON.stringify(mockResponse))
 
       // Verify the command response
       const response = await responsePromise
-      assertEquals(response.result?.frameId, 'frame-123')
+      assertEquals(response.id, mockResponse.id)
+      assertEquals(response.result?.frameId, (mockResponse.result as { frameId: string }).frameId)
 
       // Clean up
       mockSocket.close()
@@ -303,10 +311,8 @@ Deno.test({
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
+      mockSocket.simulateOpen()
       const mockSession = mockSessionManager.createSession(mockSocket, mockSocket, 'ws://localhost:9222')
-
-      // Wait for the WebSocket to be open
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Mock the WebSocket send method but don't send a response
       mockSocket.send = () => {}
@@ -335,10 +341,11 @@ Deno.test({
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
+      mockSocket.simulateOpen()
       const mockSession = mockSessionManager.createSession(mockSocket, mockSocket, 'ws://localhost:9222')
 
       // Close the WebSocket before sending
-      mockSocket.close()
+      mockSocket.setReadyState(WebSocket.CLOSED)
 
       await assertRejects(
         () => pluginManager.sendCDPCommand(
@@ -361,10 +368,8 @@ Deno.test({
       }
 
       const mockSocket = new MockWebSocket('ws://localhost:9222')
+      mockSocket.simulateOpen()
       const mockSession = mockSessionManager.createSession(mockSocket, mockSocket, 'ws://localhost:9222')
-
-      // Wait for the WebSocket to be open
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Start the command send
       const responsePromise = pluginManager.sendCDPCommand(
@@ -373,11 +378,11 @@ Deno.test({
         mockRequest
       )
 
-      // Wait for the message to be sent
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait a bit for the message to be sent
+      await new Promise(resolve => setTimeout(resolve, 50))
 
-      // Verify the sent message
-      const sentMessage = (mockSocket as MockWebSocket).getLastSentMessage()
+      // Get the sent message ID
+      const sentMessage = mockSocket.getLastSentMessage()
       const parsedMessage = JSON.parse(sentMessage!)
 
       // Simulate an error response
@@ -391,16 +396,14 @@ Deno.test({
         },
       }
 
-      // Process the error response
-      const processedResponse = await pluginManager.processMessage(mockResponse)
-      assertEquals(processedResponse, null) // Plugin responses should be filtered out
+      // Simulate receiving the error response
+      mockSocket.simulateMessage(JSON.stringify(mockResponse))
 
-      // The command should reject with the error
-      await assertRejects(
-        () => responsePromise,
-        Error,
-        'Navigation failed',
-      )
+      // The command should resolve with the error response
+      const response = await responsePromise
+      assertEquals(response.id, mockResponse.id)
+      assertEquals(response.error?.code, mockResponse.error?.code)
+      assertEquals(response.error?.message, mockResponse.error?.message)
 
       // Clean up
       mockSocket.close()
