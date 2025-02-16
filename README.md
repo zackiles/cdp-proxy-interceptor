@@ -32,7 +32,11 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
    cd cdp-proxy-interceptor
    ```
 
-2. **Set Up Environment Variables:**
+2. **Write Plugins (Or enable examples):**
+
+   Write your plugins in the `/plugins` directory in either `.js` or `.ts`. To get you started two examples (simple and advanced) are provided,you can enable them by renaming them to remove the `.disabled` extension in their names.
+
+3. **Set Up Environment Variables:**
 
    Copy the example environment file and edit it as needed:
 
@@ -42,7 +46,7 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
 
    Configure your environment variables according to the [Configuration section](#environment-variables) below. You'll need to choose between using your own Chrome/Chromium executable or letting the proxy manage Chromium for you.
 
-3. **Install Chromium (Optional):**
+4. **Install Chromium (Optional):**
 
    If you chose to let the proxy manage Chromium (Option 2 in the [Configuration section](#environment-variables)), install it using:
 
@@ -52,7 +56,8 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
 
    > Note: Skip this step if you're using your own Chrome/Chromium executable.
 
-4. **Start the Proxy Server:**
+
+5. **Start the Proxy Server:**
 
    Launch the proxy server with:
 
@@ -62,10 +67,6 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
 
    This starts the proxy on the port specified in your `.env` file (default is 9222).
 
-5. **Enable Plugins:**
-
-   Write your plugins in the `/plugins` directory in either `.js` or `.ts`. To get you started two examples (simple and advanced) are provided,you can enable them by renaming them to remove the `.disabled` extension in their names.
-
 6. **Connect Your Automation Tool (Playwright Example):**
 
    Use the following example to connect Playwright to the proxy:
@@ -74,6 +75,7 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
    import { chromium } from 'npm:playwright';
 
    const proxyServerPort = // Add the port you configured in the .env for the proxy
+   // No need to launch() your browser, use Playwrights direct connectOverCDP() method to connect to the proxy
    const browser = await chromium.connectOverCDP(`ws://localhost:${proxyServerPort}/devtools/browser`);
     // Do your regular stuff with Playwright as normal
    ```
