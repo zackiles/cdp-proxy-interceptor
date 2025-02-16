@@ -1,5 +1,6 @@
-- Add log verbosity levels that progressively increase/decrease the amount and types of logs we emit. Currently there is full verbosity as wel log the complete E2E of client<->proxy communciation.
-- Expose two methods to plugins: 1) `this.emitClientEvent(proxySessionId, event)` and 2) `this.sendCDPCommand(endpoint, proxySessionId, message)` so that plugins can interact dynamically with the client or browser.
+# TODOs
+
+- Implement the new logger.ts class across the codebase
 - Manually review the user experience of importing this as a library and improve it where needed. For example, in scnearios where it's important and the user doesn't bring their own browser, what should be the best way to use or implement the `install-chromium.ts` script?
 - Add a flag or config value that writes the history and ordering of the Playwright commands used in a given session to disk for analysis, allowing users to see what raw CDP commands their Playwright scripts execute. The logs should be structured.
 - Expose a part of the plugin interface (variable/function/constructor) that allows plugins to provide a way for them to provide a "matching" function that the determines what the types of messages or events the plugin should receive. Could be as simple as a glob, or something more advanced like a custom function that can be called with metadata on the message or event and which the plugin can return true/false on if it's a match for being handled.
