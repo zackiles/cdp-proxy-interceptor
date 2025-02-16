@@ -78,7 +78,7 @@ The core strength of this proxy lies in its [flexible plugin system](docs/plugin
     // Do your regular stuff with Playwright as normal
    ```
 
-## Plugin Examples
+## Creating Plugins
 
 For detailed plugin examples and the full API, see the [Plugin Specification](docs/plugin-specification.md) and the example plugins in the `/plugins` directory.
 
