@@ -109,7 +109,7 @@ Plugins can send CDP commands using the injected `this.sendCDPCommand` method an
 
 4. **Error Handling:** Plugin errors are caught and logged. Errors do not crash the proxy, and the original message will pass through unless blocked by the plugin.
 
-### **7.5 Plugin Example: Ad-Blocking**
+### **Plugin Example: Ad-Blocking**
 
 ```typescript
 import { BaseCDPPlugin } from '../src/base_cdp_plugin.ts';
