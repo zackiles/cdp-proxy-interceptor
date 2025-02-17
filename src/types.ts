@@ -5,6 +5,7 @@ import type { SessionManager } from './session_manager.ts'
 import type { SchemaValidator } from './schema_validator.ts'
 import type { PluginManager } from './plugin_manager.ts'
 import type { WebSocketManager } from './websocket_manager.ts'
+import type { HttpManager } from './http_manager.ts'
 
 export interface BufferConfig {
   cleanupInterval: number // Milliseconds between cleanup runs
@@ -125,6 +126,7 @@ export interface ProxyComponents {
   schemaValidator: SchemaValidator
   pluginManager: PluginManager
   wsManager: WebSocketManager
+  httpManager: HttpManager
 }
 
 // WebSocket Manager Types

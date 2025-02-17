@@ -36,7 +36,7 @@ export class WebSocketManager {
   private readonly heartbeatIntervals = new Map<WebSocket, number>()
   private readonly heartbeatListeners = new Map<
     WebSocket,
-    { close: () => void; error: () => void }
+    Record<'close' | 'error', () => void>
   >()
   private readonly socketToSession = new Map<WebSocket, string>()
   private pluginManager: PluginManager | null = null
@@ -55,7 +55,7 @@ export class WebSocketManager {
     this.pluginManager = pluginManager ?? null
   }
 
-  setPluginManager(pluginManager: PluginManager): void {
+  setPluginManager = (pluginManager: PluginManager): void => {
     this.pluginManager = pluginManager
   }
 
@@ -102,25 +102,18 @@ export class WebSocketManager {
       `[CDP PROXY] Initializing WebSocket connection for session ${sessionId}`,
     )
     this.ensureSessionState(sessionId, clientSocket, chromeSocket)
-    this.socketToSession.set(clientSocket, sessionId)
-    this.socketToSession.set(chromeSocket, sessionId)
+    this.socketToSession.set(clientSocket, sessionId).set(chromeSocket, sessionId)
 
-    const setupTasks: [string, () => void][] = [
-      ['heartbeat', () => this.setupHeartbeat(clientSocket)],
-      [
-        'message handling',
-        () => this.setupMessageHandling(clientSocket, chromeSocket, sessionId),
-      ],
-      [
-        'error handling',
-        () => this.setupErrorHandling(clientSocket, chromeSocket, sessionId),
-      ],
-    ]
+    const setupTasks = {
+      heartbeat: () => this.setupHeartbeat(clientSocket),
+      'message handling': () => this.setupMessageHandling(clientSocket, chromeSocket, sessionId),
+      'error handling': () => this.setupErrorHandling(clientSocket, chromeSocket, sessionId),
+    }
 
-    for (const [task, fn] of setupTasks) {
+    Object.entries(setupTasks).forEach(([task, fn]) => {
       console.log(`[CDP PROXY] Setting up ${task} for session ${sessionId}`)
       fn()
-    }
+    })
 
     console.log(
       `[CDP PROXY] WebSocket connection initialization complete for session ${sessionId}`,
@@ -132,30 +125,23 @@ export class WebSocketManager {
     clientSocket: WebSocket,
     chromeSocket: WebSocket,
   ): void => {
-    !this.connectionStates.has(sessionId) &&
-      this.connectionStates.set(sessionId, {
-        clientReady: false,
-        chromeReady: false,
-        clientSocket,
-        chromeSocket,
-      })
-    !this.pendingMessages.has(sessionId) &&
-      this.pendingMessages.set(sessionId, [])
+    const defaultState = {
+      clientReady: false,
+      chromeReady: false,
+      clientSocket,
+      chromeSocket,
+    }
+    this.connectionStates.set(sessionId, this.connectionStates.get(sessionId) ?? defaultState)
+    this.pendingMessages.set(sessionId, this.pendingMessages.get(sessionId) ?? [])
   }
 
   private setupHeartbeat = (ws: WebSocket): void => {
     this.clearHeartbeat(ws)
+    
     const pingInterval = setInterval(
-      () =>
-        ws.readyState === WebSocket.OPEN
-          ? (() => {
-              try {
-                ws.send('ping')
-              } catch {
-                this.clearHeartbeat(ws)
-              }
-            })()
-          : this.clearHeartbeat(ws),
+      () => ws.readyState === WebSocket.OPEN 
+        ? Promise.resolve(ws.send('ping')).catch(() => this.clearHeartbeat(ws))
+        : this.clearHeartbeat(ws),
       WEBSOCKET_MANAGER.HEARTBEAT_INTERVAL,
     )
 
@@ -163,10 +149,11 @@ export class WebSocketManager {
       close: () => this.clearHeartbeat(ws),
       error: () => this.clearHeartbeat(ws),
     }
+
+    Object.entries(listeners).forEach(([event, handler]) => 
+      ws.addEventListener(event, handler))
+
     this.heartbeatListeners.set(ws, listeners)
-    for (const [event, handler] of Object.entries(listeners)) {
-      ws.addEventListener(event, handler)
-    }
     this.heartbeatIntervals.set(ws, pingInterval)
   }
 
@@ -176,12 +163,9 @@ export class WebSocketManager {
     this.heartbeatIntervals.delete(ws)
 
     const listeners = this.heartbeatListeners.get(ws)
-    if (listeners) {
-      for (const [event, handler] of Object.entries(listeners)) {
-        ws.removeEventListener(event, handler)
-      }
-      this.heartbeatListeners.delete(ws)
-    }
+    listeners && Object.entries(listeners).forEach(([event, handler]) => 
+      ws.removeEventListener(event, handler))
+    this.heartbeatListeners.delete(ws)
   }
 
   private setupMessageHandling = (
@@ -211,32 +195,20 @@ export class WebSocketManager {
     ) => {
       const isClientSource = source === clientSocket
       const direction = isClientSource ? 'CLIENT→PROXY' : 'BROWSER→PROXY'
-      const path = source._path || 'unknown'
+      const path = source._path ?? 'unknown'
+      
       logMessage(direction, data, path)
 
       try {
         const message =
           data instanceof ArrayBuffer ? new TextDecoder().decode(data) : data
         const parsedMessage = JSON.parse(message) as CDPMessage
-        console.debug(
-          `[CDP PROXY] Parsed message from ${direction}:`,
-          parsedMessage,
-        )
-
+        
         const processedMessage = this.pluginManager
-          ? !isClientSource &&
-            'id' in parsedMessage &&
-            !('method' in parsedMessage)
-            ? await this.pluginManager.processResponse(
-                parsedMessage as CDPCommandResponse,
-              )
-            : await this.pluginManager.processMessage(parsedMessage)
+          ? await this.processPluginMessage(parsedMessage, isClientSource)
           : parsedMessage
 
-        if (!processedMessage) {
-          console.debug('[CDP PROXY] Message blocked by plugin')
-          return
-        }
+        if (!processedMessage) return
 
         const outDirection = isClientSource ? 'PROXY→BROWSER' : 'PROXY→CLIENT'
         const outMessage = JSON.stringify(processedMessage)
@@ -247,41 +219,55 @@ export class WebSocketManager {
           return
         }
 
-        const canSendMessage = isClientSource
-          ? chromeSocket.readyState === WebSocket.OPEN &&
-            clientSocket.readyState === WebSocket.OPEN
-          : clientSocket.readyState === WebSocket.OPEN
-
-        if (canSendMessage) {
-          logMessage(outDirection, outMessage, path)
-          target.send(outMessage)
-        } else {
-          this.bufferMessage(
-            sessionId,
-            isClientSource,
-            outMessage,
-            isClientSource
-              ? chromeSocket.readyState !== WebSocket.OPEN
-                ? `Chrome socket not ready (state: ${chromeSocket.readyState})`
-                : `Client socket not ready (state: ${clientSocket.readyState})`
-              : `Client socket not ready (state: ${clientSocket.readyState})`,
-          )
-        }
+        const canSend = this.canSendMessage(isClientSource, clientSocket, chromeSocket)
+        canSend
+          ? (logMessage(outDirection, outMessage, path), target.send(outMessage))
+          : this.bufferMessage(
+              sessionId,
+              isClientSource,
+              outMessage,
+              this.getSocketStateMessage(isClientSource, clientSocket, chromeSocket),
+            )
       } catch (error) {
         console.error(`[CDP PROXY] Error handling message:`, error)
-        this.handleWebSocketError(
-          isClientSource ? 'client' : 'chrome',
-          error,
-          sessionId,
-        )
+        this.handleWebSocketError(isClientSource ? 'client' : 'chrome', error, sessionId)
       }
     }
 
-    clientSocket.onmessage = ({ data }) =>
-      handleMessage(clientSocket, chromeSocket, data)
-    chromeSocket.onmessage = ({ data }) =>
-      handleMessage(chromeSocket, clientSocket, data)
+    clientSocket.onmessage = ({ data }) => handleMessage(clientSocket, chromeSocket, data)
+    chromeSocket.onmessage = ({ data }) => handleMessage(chromeSocket, clientSocket, data)
   }
+
+  private processPluginMessage = async (
+    message: CDPMessage,
+    isClientSource: boolean,
+  ): Promise<CDPMessage | null> => {
+    if (!this.pluginManager) return message
+    
+    return !isClientSource && 'id' in message && !('method' in message)
+      ? await this.pluginManager.processResponse(message as CDPCommandResponse)
+      : await this.pluginManager.processMessage(message)
+  }
+
+  private canSendMessage = (
+    isClientSource: boolean,
+    clientSocket: WebSocket,
+    chromeSocket: WebSocket,
+  ): boolean =>
+    isClientSource
+      ? chromeSocket.readyState === WebSocket.OPEN && clientSocket.readyState === WebSocket.OPEN
+      : clientSocket.readyState === WebSocket.OPEN
+
+  private getSocketStateMessage = (
+    isClientSource: boolean,
+    clientSocket: WebSocket,
+    chromeSocket: WebSocket,
+  ): string =>
+    isClientSource
+      ? chromeSocket.readyState !== WebSocket.OPEN
+        ? `Chrome socket not ready (state: ${chromeSocket.readyState})`
+        : `Client socket not ready (state: ${clientSocket.readyState})`
+      : `Client socket not ready (state: ${clientSocket.readyState})`
 
   private bufferMessage = (
     sessionId: string,
@@ -304,99 +290,74 @@ export class WebSocketManager {
     chromeSocket: WebSocket,
     sessionId: string,
   ): void => {
-    const logConnection = (
-      type: WebSocketSource,
-      status: WebSocketConnectionStatus,
-    ) =>
+    const logConnection = (type: WebSocketSource, status: WebSocketConnectionStatus): void =>
       console.debug(
-        `[CDP PROXY] %c${type === 'client' ? 'CLIENT' : 'BROWSER'} CONNECTED%c | Session ${sessionId} | ${status}`,
+        `[CDP PROXY] %c${type.toUpperCase()} ${status}%c | Session ${sessionId}`,
         WEBSOCKET_MANAGER.LOG_STYLE,
         '',
       )
 
-    const handleSocketEvent =
-      (source: WebSocketSource, eventType: 'close' | 'error' | 'open') =>
-      (event?: CloseEvent | Event) => {
-        const socket = source === 'client' ? clientSocket : chromeSocket
-        const sessionId = this.socketToSession.get(socket) ?? 'unknown'
+    const updateConnectionState = (source: WebSocketSource, isConnected: boolean): void => {
+      const state = this.connectionStates.get(sessionId)
+      if (!state || this.cleanupInProgress.has(sessionId)) return
 
-        if (eventType === 'close') {
-          const closeEvent = event as CloseEvent
-          logConnection(source, 'DISCONNECTED')
-          console.debug(`[CDP PROXY] Socket closed for ${source}:`, {
-            sessionId,
-            code: closeEvent?.code,
-            reason: closeEvent?.reason,
-            wasClean: closeEvent?.wasClean,
-            cleanupInProgress: this.cleanupInProgress.has(sessionId),
-          })
+      const prevState = { clientReady: state.clientReady, chromeReady: state.chromeReady }
+      source === 'client' ? state.clientReady = isConnected : state.chromeReady = isConnected
 
-          if (!this.cleanupInProgress.has(sessionId)) {
-            const state = this.connectionStates.get(sessionId)
-            if (state) {
-              const prevState = {
-                clientReady: state.clientReady,
-                chromeReady: state.chromeReady,
-              }
-              if (source === 'client') {
-                state.clientReady = false
-              } else {
-                state.chromeReady = false
-              }
-              console.debug(
-                `[CDP PROXY] Updated connection state after ${source} close:`,
-                {
-                  prevState,
-                  newState: {
-                    clientReady: state.clientReady,
-                    chromeReady: state.chromeReady,
-                  },
-                },
-              )
-            }
-          }
-        } else if (eventType === 'error') {
-          this.handleWebSocketError(source, event, sessionId)
-          socket.readyState === WebSocket.OPEN &&
-            socket.close(1006, 'Error occurred')
-        } else if (eventType === 'open') {
-          logConnection(source, 'CONNECTED')
-          const state = this.connectionStates.get(sessionId) ?? {
-            clientReady: source === 'client',
-            chromeReady: source === 'chrome',
-            clientSocket,
-            chromeSocket,
-          }
+      console.debug('[CDP PROXY] Updated connection state:', { prevState, newState: { 
+        clientReady: state.clientReady, 
+        chromeReady: state.chromeReady 
+      }})
+    }
 
-          if (source === 'client') {
-            state.clientReady = true
-          } else {
-            state.chromeReady = true
-          }
-          this.connectionStates.set(sessionId, state)
+    const handleSocketEvent = (source: WebSocketSource) => ({
+      open: (_: Event) => {
+        logConnection(source, 'CONNECTED')
+        updateConnectionState(source, true)
 
-          if (
-            state.clientReady &&
-            state.chromeReady &&
-            clientSocket.readyState === WebSocket.OPEN &&
-            chromeSocket.readyState === WebSocket.OPEN
-          ) {
-            this.processPendingMessages(sessionId, clientSocket, chromeSocket)
-          }
+        const state = this.connectionStates.get(sessionId) ?? {
+          clientReady: source === 'client',
+          chromeReady: source === 'chrome',
+          clientSocket,
+          chromeSocket,
         }
-      }
+        this.connectionStates.set(sessionId, state)
 
-    const setupSocket = (socket: WebSocket, source: WebSocketSource) => {
-      socket.onopen = handleSocketEvent(source, 'open')
-      socket.onclose = handleSocketEvent(source, 'close')
-      socket.onerror = handleSocketEvent(source, 'error')
+        const bothReady = state.clientReady && 
+          state.chromeReady && 
+          clientSocket.readyState === WebSocket.OPEN && 
+          chromeSocket.readyState === WebSocket.OPEN
+
+        bothReady && this.processPendingMessages(sessionId, clientSocket, chromeSocket)
+      },
+      close: (ev: CloseEvent) => {
+        logConnection(source, 'DISCONNECTED')
+        console.debug(`[CDP PROXY] Socket closed for ${source}:`, {
+          sessionId,
+          code: ev?.code,
+          reason: ev?.reason,
+          wasClean: ev?.wasClean,
+          cleanupInProgress: this.cleanupInProgress.has(sessionId),
+        })
+        !this.cleanupInProgress.has(sessionId) && updateConnectionState(source, false)
+      },
+      error: (ev: Event | ErrorEvent) => {
+        this.handleWebSocketError(source, ev, sessionId)
+        const socket = source === 'client' ? clientSocket : chromeSocket
+        socket.readyState === WebSocket.OPEN && socket.close(1006, 'Error occurred')
+      }
+    })
+
+    const setupSocket = (socket: WebSocket, source: WebSocketSource): void => {
+      const handlers = handleSocketEvent(source)
+      socket.onopen = handlers.open
+      socket.onclose = handlers.close
+      socket.onerror = handlers.error
     }
 
     setupSocket(clientSocket, 'client')
     setupSocket(chromeSocket, 'chrome')
-
-    chromeSocket.readyState === WebSocket.OPEN &&
-      handleSocketEvent('chrome', 'open')()
+    chromeSocket.readyState === WebSocket.OPEN && handleSocketEvent('chrome').open(new Event('open'))
   }
 
   private processPendingMessages = (
@@ -405,34 +366,25 @@ export class WebSocketManager {
     chromeSocket: WebSocket,
   ): void => {
     const pending = this.pendingMessages.get(sessionId) ?? []
-    const canSendToChrome =
-      chromeSocket.readyState === WebSocket.OPEN &&
-      clientSocket.readyState === WebSocket.OPEN
-    const canSendToClient = clientSocket.readyState === WebSocket.OPEN
-
-    const processMessages = (
-      messages: WebSocketPendingMessage[],
-      target: WebSocket,
-    ) => {
-      for (const { message } of messages) {
-        target.send(message)
-      }
+    const socketStates = {
+      toChrome: chromeSocket.readyState === WebSocket.OPEN && clientSocket.readyState === WebSocket.OPEN,
+      toClient: clientSocket.readyState === WebSocket.OPEN
     }
 
-    canSendToChrome &&
-      processMessages(
-        pending.filter((m) => m.source === 'client'),
-        chromeSocket,
-      )
-    canSendToClient &&
-      processMessages(
-        pending.filter((m) => m.source === 'chrome'),
-        clientSocket,
-      )
+    const sendMessages = (messages: WebSocketPendingMessage[], target: WebSocket): void =>
+      messages.forEach(({ message }) => target.send(message))
 
-    canSendToChrome &&
-      canSendToClient &&
-      this.pendingMessages.set(sessionId, [])
+    socketStates.toChrome && sendMessages(
+      pending.filter(m => m.source === 'client'),
+      chromeSocket
+    )
+
+    socketStates.toClient && sendMessages(
+      pending.filter(m => m.source === 'chrome'),
+      clientSocket
+    )
+
+    socketStates.toChrome && socketStates.toClient && this.pendingMessages.set(sessionId, [])
   }
 
   private handleWebSocketError = (
@@ -440,20 +392,16 @@ export class WebSocketManager {
     error: unknown,
     sessionId: string,
   ): void => {
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : error instanceof ErrorEvent
-          ? (error.error?.message ?? error.message)
-          : String(error)
+    const errorMessage = error instanceof Error
+      ? error.message
+      : error instanceof ErrorEvent
+        ? error.error?.message ?? error.message
+        : String(error)
 
-    const isDisconnectionError = errorMessage
-      .toLowerCase()
-      .match(/(disconnected|unexpected eof|connection.*closed)/i)
+    const isDisconnectionError = /disconnected|unexpected eof|connection.*closed/i.test(errorMessage)
+    
     isDisconnectionError
-      ? console.debug(
-          `[CDP PROXY] ${source} WebSocket disconnected: ${errorMessage}`,
-        )
+      ? console.debug(`[CDP PROXY] ${source} WebSocket disconnected: ${errorMessage}`)
       : this.errorHandler.handleError({
           type: CDPErrorType.CONNECTION,
           code: 1006,
@@ -467,8 +415,9 @@ export class WebSocketManager {
    * Cleans up resources for a specific session
    * @param sessionId - The ID of the session to clean up
    */
-  public cleanup(sessionId: string): void {
-    console.debug(`[CDP PROXY] Starting cleanup for session ${sessionId}:`, {
+  public cleanup = (sessionId: string): void => {
+    console.debug('[CDP PROXY] Starting cleanup:', {
+      sessionId,
       hasState: this.connectionStates.has(sessionId),
       hasPendingMessages: this.pendingMessages.has(sessionId),
       socketToSessionSize: this.socketToSession.size,
@@ -478,9 +427,11 @@ export class WebSocketManager {
     try {
       const state = this.connectionStates.get(sessionId)
       state && [...this.heartbeatIntervals.keys()].forEach(this.clearHeartbeat)
+      
       this.connectionStates.delete(sessionId)
       this.pendingMessages.delete(sessionId)
       this.socketToSession.clear()
+      
       console.debug(`[CDP PROXY] Cleanup completed for session ${sessionId}`)
     } finally {
       this.cleanupInProgress.delete(sessionId)
